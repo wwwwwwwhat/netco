@@ -1,0 +1,43 @@
+{
+  "name": "decentralized-secure-social-network",
+  "version": "1.0.0",
+  "description": "去中心化安全社交网络 - 基于libp2p的P2P即时通讯系统",
+  "main": "src/index.js",
+  "type": "module",
+  "scripts": {
+    "start": "node src/index.js",
+    "server": "node src/server.js",
+    "test": "node src/examples/test.js"
+  },
+  "keywords": [
+    "libp2p",
+    "p2p",
+    "decentralized",
+    "social-network",
+    "gossipsub"
+  ],
+  "author": "",
+  "license": "MIT",
+  "dependencies": {
+    "@chainsafe/libp2p-gossipsub": "^13.0.0",
+    "@chainsafe/libp2p-noise": "^15.0.0",
+    "@libp2p/crypto": "^4.0.0",
+    "@libp2p/floodsub": "^11.0.10",
+    "@libp2p/identify": "^1.0.0",
+    "@libp2p/kad-dht": "^12.0.0",
+    "@libp2p/mplex": "^10.0.0",
+    "@libp2p/tcp": "^9.0.0",
+    "@libp2p/websockets": "^8.0.0",
+    "it-length-prefixed": "^10.0.1",
+    "it-map": "^3.1.4",
+    "it-pipe": "^3.0.1",
+    "libp2p": "^1.0.0",
+    "scrypt-js": "^3.0.1",
+    "tweetnacl": "^1.0.3",
+    "tweetnacl-util": "^0.15.1",
+    "uint8arraylist": "^2.4.8",
+    "express": "^4.18.2",
+    "ws": "^8.14.2",
+    "cors": "^2.8.5"
+  }
+}

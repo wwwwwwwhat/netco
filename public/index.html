@@ -1,0 +1,129 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>去中心化安全社交网络</title>
+    <link rel="stylesheet" href="styles.css">
+</head>
+<body>
+    <!-- 登录界面 -->
+    <div id="loginScreen" class="screen">
+        <div class="login-container">
+            <h1>🔐 去中心化安全社交网络</h1>
+            <p class="subtitle">基于 libp2p 的端到端加密通讯</p>
+            
+            <form id="loginForm">
+                <div class="form-group">
+                    <label for="username">用户名</label>
+                    <input type="text" id="username" required placeholder="输入用户名">
+                </div>
+                
+                <div class="form-group">
+                    <label for="password">密码</label>
+                    <input type="password" id="password" required placeholder="输入密码">
+                </div>
+                
+                <div class="form-group">
+                    <label for="port">端口 (可选)</label>
+                    <input type="number" id="port" placeholder="留空自动分配">
+                </div>
+                
+                <button type="submit" class="btn btn-primary">登录 / 注册</button>
+            </form>
+            
+            <div id="loginError" class="error-message"></div>
+            <div id="loginStatus" class="status-message"></div>
+        </div>
+    </div>
+
+    <!-- 主界面 -->
+    <div id="mainScreen" class="screen hidden">
+        <div class="app-container">
+            <!-- 侧边栏 -->
+            <div class="sidebar">
+                <div class="user-info">
+                    <h3 id="currentUsername">用户</h3>
+                    <p class="user-id" id="currentUserId">ID: ...</p>
+                    <button id="logoutBtn" class="btn btn-secondary btn-small">退出</button>
+                </div>
+                
+                <div class="tabs">
+                    <button class="tab-btn active" data-tab="groups">群组</button>
+                    <button class="tab-btn" data-tab="direct">私聊</button>
+                    <button class="tab-btn" data-tab="network">网络</button>
+                </div>
+                
+                <!-- 群组标签页 -->
+                <div id="groupsTab" class="tab-content active">
+                    <div class="section-header">
+                        <h4>我的群组</h4>
+                        <button id="createGroupBtn" class="btn btn-primary btn-small">+ 创建</button>
+                    </div>
+                    <div id="groupsList" class="list"></div>
+                    
+                    <div class="section-header">
+                        <h4>加入群组</h4>
+                    </div>
+                    <form id="joinGroupForm" class="inline-form">
+                        <input type="text" id="joinGroupId" placeholder="群组ID" required>
+                        <input type="text" id="joinGroupName" placeholder="群组名称" required>
+                        <input type="text" id="joinGroupKey" placeholder="共享密钥" required>
+                        <button type="submit" class="btn btn-primary btn-small">加入</button>
+                    </form>
+                </div>
+                
+                <!-- 私聊标签页 -->
+                <div id="directTab" class="tab-content">
+                    <div class="section-header">
+                        <h4>对话列表</h4>
+                        <button id="newChatBtn" class="btn btn-primary btn-small">+ 新对话</button>
+                    </div>
+                    <div id="conversationsList" class="list"></div>
+                </div>
+                
+                <!-- 网络标签页 -->
+                <div id="networkTab" class="tab-content">
+                    <div class="section-header">
+                        <h4>节点信息</h4>
+                    </div>
+                    <div id="networkInfo" class="info-box"></div>
+                </div>
+            </div>
+            
+            <!-- 主内容区 -->
+            <div class="main-content">
+                <div id="emptyState" class="empty-state">
+                    <p>选择一个群组或对话开始聊天</p>
+                </div>
+                
+                <!-- 聊天界面 -->
+                <div id="chatView" class="chat-view hidden">
+                    <div class="chat-header">
+                        <h3 id="chatTitle">聊天</h3>
+                        <button id="leaveChatBtn" class="btn btn-secondary btn-small">离开</button>
+                    </div>
+                    
+                    <div id="messagesContainer" class="messages-container"></div>
+                    
+                    <div class="message-input-container">
+                        <input type="text" id="messageInput" placeholder="输入消息..." maxlength="1000">
+                        <button id="sendBtn" class="btn btn-primary">发送</button>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- 模态框 -->
+    <div id="modal" class="modal hidden">
+        <div class="modal-content">
+            <span class="close">&times;</span>
+            <div id="modalBody"></div>
+        </div>
+    </div>
+
+    <script src="app.js"></script>
+</body>
+</html>
+
