@@ -1,20 +1,25 @@
 {
   "name": "decentralized-secure-social-network",
   "version": "1.0.0",
-  "description": "去中心化安全社交网络 - 基于libp2p的P2P即时通讯系统",
+  "description": "去中心化安全社交网络 - 基于Hyperswarm的现代P2P即时通讯系统",
   "main": "src/index.js",
   "type": "module",
   "scripts": {
     "start": "node src/index.js",
     "server": "node src/server.js",
-    "test": "node src/examples/test.js"
+    "demo": "node src/examples/hyperswarm-demo.js",
+    "test": "node src/examples/hyperswarm-demo.js",
+    "alice": "node src/clients/alice.js",
+    "bob": "node src/clients/bob.js",
+    "eve": "node src/clients/eve.js"
   },
   "keywords": [
-    "libp2p",
+    "hyperswarm",
     "p2p",
     "decentralized",
     "social-network",
-    "gossipsub"
+    "dht",
+    "nat-traversal"
   ],
   "author": "",
   "license": "MIT",
@@ -28,6 +33,10 @@
     "@libp2p/mplex": "^10.0.0",
     "@libp2p/tcp": "^9.0.0",
     "@libp2p/websockets": "^8.0.0",
+    "b4a": "^1.7.3",
+    "cors": "^2.8.5",
+    "express": "^4.18.2",
+    "hyperswarm": "^4.16.0",
     "it-length-prefixed": "^10.0.1",
     "it-map": "^3.1.4",
     "it-pipe": "^3.0.1",
@@ -36,8 +45,6 @@
     "tweetnacl": "^1.0.3",
     "tweetnacl-util": "^0.15.1",
     "uint8arraylist": "^2.4.8",
-    "express": "^4.18.2",
-    "ws": "^8.14.2",
-    "cors": "^2.8.5"
+    "ws": "^8.14.2"
   }
 }
