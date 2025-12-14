@@ -38,7 +38,7 @@ export function cacheMessage(username, messageData) {
   };
   
   // Flush immediately for persistence
-  flushCache(username);
+  // flushCache(username);
 }
 
 /**

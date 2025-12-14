@@ -57,14 +57,13 @@ export class DirectMessage {
   }
 
   /**
-   * 启动心跳循环
+   * 启动计时器循环
    */
   startHeartbeatLoop() {
     const HEARTBEAT_INTERVAL = 5 * 60 * 1000; // 5 minutes
-    // const HEARTBEAT_INTERVAL = 30 * 1000; // 30 seconds for testing
 
     setInterval(() => {
-        this.sendHeartbeats();
+        this.sendValidMsg();
         this.checkOfflineStatus();
     }, HEARTBEAT_INTERVAL);
   }
@@ -72,7 +71,7 @@ export class DirectMessage {
   /**
    * 发送心跳包给所有联系人
    */
-  async sendHeartbeats() {
+  async sendValidMsg() {
     for (const [hexKey, contact] of this.contacts) {
         const topic = `inbox/${hexKey}`;
         const heartbeat = {

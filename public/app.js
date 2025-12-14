@@ -260,6 +260,8 @@ class SocialNetworkApp {
             const response = await fetch(`/api/contacts?sessionId=${this.sessionId}`);
             const contacts = await response.json();
             
+            console.log('Loaded contacts:', contacts.length);
+
             // Only clear if we got a valid array
             if (Array.isArray(contacts)) {
                 this.contacts.clear();
@@ -291,18 +293,88 @@ class SocialNetworkApp {
             const statusClass = contact.status === 'online' ? 'status-online' : 'status-offline';
             
             item.innerHTML = `
-                <div class="list-item-title">
-                    ${contact.username}
-                    <span class="status-dot ${statusClass}"></span>
+                <div style="display:flex;align-items:center;justify-content:space-between;width:100%">
+                  <div style="flex:1">
+                    <div class="list-item-title">
+                        ${contact.username}
+                        <span class="status-dot ${statusClass}"></span>
+                    </div>
+                    <div class="list-item-subtitle">ID: ${contact.peerId ? contact.peerId.substring(0, 10) + '...' : 'Unknown'}</div>
+                  </div>
+                  <div style="margin-left:8px;position:relative">
+                    <button class="contact-options-btn" title="更多" style="background:transparent;border:none;cursor:pointer;padding:6px;">⋯</button>
+                    <div class="contact-options-menu" style="display:none;position:absolute;right:0;top:28px;background:#fff;border:1px solid #ddd;border-radius:4px;box-shadow:0 2px 6px rgba(0,0,0,0.1);z-index:50;">
+                      <div class="contact-options-item" data-action="delete" style="padding:8px 12px;cursor:pointer;white-space:nowrap;">删除联系人</div>
+                    </div>
+                  </div>
                 </div>
-                <div class="list-item-subtitle">ID: ${contact.peerId ? contact.peerId.substring(0, 10) + '...' : 'Unknown'}</div>
             `;
-            item.addEventListener('click', () => {
+
+            // Open chat when clicking the item area (but not the options)
+            item.addEventListener('click', (e) => {
+                // If click came from options button or menu, ignore
+                if (e.target.closest('.contact-options-btn') || e.target.closest('.contact-options-menu')) return;
                 this.openDirectChat(contact.publicKey, contact.username);
             });
+
+            // Options button toggle
+            // const btn = item.querySelector('.contact-options-btn');
+            // const menu = item.querySelector('.contact-options-menu');
+            // if (btn && menu) {
+            //     btn.addEventListener('click', (e) => {
+            //         e.stopPropagation();
+            //         // hide other open menus
+            //         document.querySelectorAll('.contact-options-menu').forEach(m => { if (m !== menu) m.style.display = 'none'; });
+            //         menu.style.display = menu.style.display === 'block' ? 'none' : 'block';
+            //     });
+
+            //     // Click on menu items
+            //     menu.addEventListener('click', (e) => {
+            //         e.stopPropagation();
+            //         const actionEl = e.target.closest('.contact-options-item');
+            //         if (!actionEl) return;
+            //         const action = actionEl.dataset.action;
+            //         if (action === 'delete') {
+            //             this.deleteContact(contact.publicKey);
+            //             menu.style.display = 'none';
+            //         }
+            //     });
+            // }
+
+            // // Click outside to close menus
+            // document.addEventListener('click', () => {
+            //     document.querySelectorAll('.contact-options-menu').forEach(m => m.style.display = 'none');
+            // });
+
             listEl.appendChild(item);
         });
     }
+
+    // async deleteContact(targetPublicKey) {
+    //     if (!confirm('确认删除该联系人吗？')) return;
+
+    //     try {
+    //         const res = await fetch('/api/contacts/delete', {
+    //             method: 'POST',
+    //             headers: { 'Content-Type': 'application/json' },
+    //             body: JSON.stringify({ sessionId: this.sessionId, targetPublicKey })
+    //         });
+
+    //         const data = await res.json();
+    //         if (!res.ok) throw new Error(data.error || '删除失败');
+
+    //         // Remove from local map and UI
+    //         this.contacts.delete(targetPublicKey);
+    //         if (this.currentChat && this.currentChat.type === 'direct' && this.currentChat.publicKey === targetPublicKey) {
+    //             this.currentChat = null;
+    //             document.getElementById('emptyState').classList.remove('hidden');
+    //             document.getElementById('chatView').classList.add('hidden');
+    //         }
+    //         this.renderContactsList();
+    //     } catch (err) {
+    //         alert('删除联系人失败: ' + err.message);
+    //     }
+    // }
     
     showRequestModal(request) {
         const modal = document.getElementById('requestModal');

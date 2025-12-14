@@ -14,6 +14,8 @@ import { hashData } from './crypto/digest.js';
 import { restoreKeyPair } from './crypto/identity.js';
 import { cacheMessage, loadHistory, flushCache } from './data/msg_storage.js';
 import { logError } from './data/logger.js';
+import { getFreePort } from './network/nethelper.js';
+import { error } from 'console';
 
 const app = express();
 const server = createServer(app);
@@ -30,6 +32,17 @@ process.on('exit', () => flushCache());
 process.on('SIGINT', () => {
   flushCache();
   process.exit();
+});
+
+// Flush cache on fresh the page
+process.on('SIGHUP', () => {
+  console.log('🔄 Received SIGHUP - flushing cache');
+  flushCache();
+});
+process.on('SIGTERM', () => {
+  console.log('🔄 Received SIGTERM - flushing cache and exiting');
+  flushCache();
+  process.exit(0);
 });
 
 app.use(cors());
@@ -73,7 +86,8 @@ wss.on('connection', (ws, req) => {
   ws.on('close', () => {
     console.log('WebSocket连接关闭');
     // Flush cache for the user associated with this session if possible
-    // Since we don't have easy access to username here without tracking it, we flush all for simplicity or improve tracking
+    // Since we don't have easy access to username here without tracking it, 
+    // we flush all for simplicity or improve tracking
     flushCache();
   });
 });
@@ -103,6 +117,8 @@ function setupMessageHandlers(network, sessionId, username) {
   // 设置群组消息回调
   network.groupChat.setMessageCallback((messageData) => {
     // Save to cache
+    // 暂时不储存，等到特定条件下储存：
+    // 1. 计时器到达指定时间；2. 连接关闭
     cacheMessage(username, {
       ...messageData,
       type: 'group_message'
@@ -178,6 +194,18 @@ app.post('/api/register', async (req, res) => {
       return res.status(400).json({ error: '用户名和密码不能为空' });
     }
 
+    // 密码长度不能少于8位，要同时存在数字和字母，不能出现
+    // 数字、字母、下滑线以外的内容
+    const minilen = 8;
+    const allowed = /^[A-Za-z0-9_]+$/;
+    const format = /(?=.*[A-Za-z])(?=.*\d)/;
+    const legal = password.length >= minilen && 
+                  allowed.test(password)     && 
+                  format.test(password);
+    if(!legal) {
+      return res.status(400).json({ error: '密码长度不能少于8位，要同时存在数字和字母，不能出现数字、字母、下滑线以外的内容' });
+    }
+
     if (loadUser(username)) {
       return res.status(409).json({ error: '用户已存在' });
     }
@@ -185,7 +213,8 @@ app.post('/api/register', async (req, res) => {
     const sessionId = `${username}_${Date.now()}`;
     const network = new SecureSocialNetwork();
     
-    await network.initialize(username, password, port || 0, bootstrapPeers || []);
+    let listenPort = port || await getFreePort();
+    await network.initialize(username, password, listenPort, bootstrapPeers || []);
     
     setupMessageHandlers(network, sessionId, username);
     
@@ -242,7 +271,10 @@ app.post('/api/login', async (req, res) => {
     console.log(`📖 从文件加载用户 ${username} 的信息`);
     const keys = restoreKeyPair(existingUser.publicKey, existingUser.secretKey);
 
-    await network.initialize(username, password, port || 0, bootstrapPeers || [], keys);
+    
+    // If caller didn't provide a port, obtain a free port asynchronously
+    const listenPort = port || await getFreePort();
+    await network.initialize(username, password, listenPort, bootstrapPeers || [], keys);
     
     // Load contacts from file
     if (existingUser.contacts) {
@@ -295,7 +327,7 @@ app.post('/api/login', async (req, res) => {
       password,
       publicKey: network.getPublicKey(),
       secretKey: network.userKeyPair.secretKey,
-      port: port || 0
+      port: listenPort || 0
     });
     
     res.json({
@@ -310,84 +342,84 @@ app.post('/api/login', async (req, res) => {
   }
 });
 
-/**
- * 初始化 (兼容旧接口，自动判断登录或注册)
- */
-app.post('/api/initialize', async (req, res) => {
-  try {
-    const { username, password, port, bootstrapPeers } = req.body;
+// /**
+//  * 初始化 (兼容旧接口，自动判断登录或注册)
+//  */
+// app.post('/api/initialize', async (req, res) => {
+//   try {
+//     const { username, password, port, bootstrapPeers } = req.body;
     
-    if (!username || !password) {
-      return res.status(400).json({ error: '用户名和密码不能为空' });
-    }
+//     if (!username || !password) {
+//       return res.status(400).json({ error: '用户名和密码不能为空' });
+//     }
     
-    const sessionId = `${username}_${Date.now()}`;
-    const network = new SecureSocialNetwork();
+//     const sessionId = `${username}_${Date.now()}`;
+//     const network = new SecureSocialNetwork();
     
-    // Check if user exists
-    const existingUser = loadUser(username);
-    let keys = null;
+//     // Check if user exists
+//     const existingUser = loadUser(username);
+//     let keys = null;
 
-    if (existingUser) {
-      // Verify password
-      const inputHash = hashData(password);
-      // Handle legacy users without password hash or with plain text password
-      const storedPassword = existingUser.password;
+//     if (existingUser) {
+//       // Verify password
+//       const inputHash = hashData(password);
+//       // Handle legacy users without password hash or with plain text password
+//       const storedPassword = existingUser.password;
       
-      // If stored password is not hashed (legacy), we might want to allow it or migrate it.
-      // But for now, let's assume if it matches hash OR matches plain text (for backward compat if needed, though we just added hashing)
-      // Actually, we just implemented hashing. Old users might have plain text.
-      // Let's check if storedPassword matches inputHash.
+//       // If stored password is not hashed (legacy), we might want to allow it or migrate it.
+//       // But for now, let's assume if it matches hash OR matches plain text (for backward compat if needed, though we just added hashing)
+//       // Actually, we just implemented hashing. Old users might have plain text.
+//       // Let's check if storedPassword matches inputHash.
       
-      if (storedPassword !== inputHash) {
-         // Fallback for legacy plain text password (optional, but good for dev)
-         if (storedPassword !== password) {
-             return res.status(401).json({ error: '密码错误' });
-         }
-      }
+//       if (storedPassword !== inputHash) {
+//          // Fallback for legacy plain text password (optional, but good for dev)
+//          if (storedPassword !== password) {
+//              return res.status(401).json({ error: '密码错误' });
+//          }
+//       }
       
-      console.log(`📖 从文件加载用户 ${username} 的信息`);
-      keys = restoreKeyPair(existingUser.publicKey, existingUser.secretKey);
-    }
+//       console.log(`📖 从文件加载用户 ${username} 的信息`);
+//       keys = restoreKeyPair(existingUser.publicKey, existingUser.secretKey);
+//     }
 
-    await network.initialize(username, password, port || 0, bootstrapPeers || [], keys);
+//     await network.initialize(username, password, port || 0, bootstrapPeers || [], keys);
     
-    // 设置消息处理器
-    setupMessageHandlers(network, sessionId, username);
+//     // 设置消息处理器
+//     setupMessageHandlers(network, sessionId, username);
     
-    clients.set(sessionId, {
-      network,
-      ws: null,
-      messageQueue: []
-    });
+//     clients.set(sessionId, {
+//       network,
+//       ws: null,
+//       messageQueue: []
+//     });
     
-    // Save user data (update last login)
-    saveUser({
-      username,
-      password, // saveUser handles hashing
-      publicKey: network.getPublicKey(),
-      secretKey: network.userKeyPair.secretKey,
-      port: port || 0
-    });
+//     // Save user data (update last login)
+//     saveUser({
+//       username,
+//       password, // saveUser handles hashing
+//       publicKey: network.getPublicKey(),
+//       secretKey: network.userKeyPair.secretKey,
+//       port: port || 0
+//     });
 
-    // Load contacts if any
-    if (existingUser && existingUser.contacts) {
-      existingUser.contacts.forEach(c => {
-        network.directMessage.addContact(c.publicKey, c.username, c.peerId);
-      });
-    }
+//     // Load contacts if any
+//     if (existingUser && existingUser.contacts) {
+//       existingUser.contacts.forEach(c => {
+//         network.directMessage.addContact(c.publicKey, c.username, c.peerId);
+//       });
+//     }
     
-    res.json({
-      sessionId,
-      publicKey: network.getPublicKey(),
-      username: network.getUsername(),
-      nodeInfo: network.getNodeInfo()
-    });
-  } catch (error) {
-    console.error('初始化错误:', error);
-    res.status(500).json({ error: error.message });
-  }
-});
+//     res.json({
+//       sessionId,
+//       publicKey: network.getPublicKey(),
+//       username: network.getUsername(),
+//       nodeInfo: network.getNodeInfo()
+//     });
+//   } catch (error) {
+//     console.error('初始化错误:', error);
+//     res.status(500).json({ error: error.message });
+//   }
+// });
 
 /**
  * 创建群组
@@ -565,6 +597,15 @@ app.get('/api/contacts', (req, res) => {
       return res.status(404).json({ error: '会话不存在' });
     }
     
+    // Safety check: if memory contacts are empty, try to reload from disk
+    if (client.network.directMessage.contacts.size === 0) {
+        const user = loadUser(client.network.getUsername());
+        if (user && user.contacts && user.contacts.length > 0) {
+            console.log(`⚠️ 内存中联系人为空，从磁盘重新加载 ${user.contacts.length} 个联系人`);
+            client.network.directMessage.loadContacts(user.contacts);
+        }
+    }
+    
     // Convert Map to Array
     const contacts = Array.from(client.network.directMessage.contacts.values());
     res.json(contacts);
@@ -618,7 +659,12 @@ app.post('/api/contacts/respond', async (req, res) => {
       // Check if already exists
       const exists = contacts.some(c => c.publicKey === targetPublicKey);
       if (!exists) {
-        contacts.push({ publicKey: targetPublicKey, username: targetUsername, peerId: targetPeerId, addedAt: Date.now() });
+        contacts.push({ 
+          publicKey: targetPublicKey, 
+          username: targetUsername, 
+          peerId: targetPeerId, 
+          addedAt: Date.now() 
+        });
         saveUser({
           username: client.network.getUsername(),
           contacts
@@ -632,6 +678,52 @@ app.post('/api/contacts/respond', async (req, res) => {
     res.status(500).json({ error: error.message });
   }
 });
+
+/**
+ * 删除好友
+ */
+// app.post('/api/contacts/delete', async (req, res) => {
+//   try {
+//     const { sessionId, targetPublicKey } = req.body;
+//     const client = clients.get(sessionId);
+
+//     if (!client) {
+//       return res.status(404).json({ error: '会话不存在' });
+//     }
+
+//     const currentUser = loadUser(client.network.getUsername());
+//     const contacts = currentUser.contacts || [];
+
+//     const idx = contacts.findIndex(c => c.publicKey === targetPublicKey);
+//     if (idx === -1) {
+//       return res.status(404).json({ error: '联系人不存在' });
+//     }
+
+//     // Remove from persisted contacts and save
+//     contacts.splice(idx, 1);
+//     saveUser({ username, contacts });
+
+//     // Also remove from in-memory directMessage contacts map if present
+//     try {
+//       const dm = client.network.directMessage;
+//       if (dm && dm.contacts) {
+//         for (const [k, v] of dm.contacts.entries()) {
+//           if (v && v.publicKey === targetPublicKey) {
+//             dm.contacts.delete(k);
+//             break;
+//           }
+//         }
+//       }
+//     } catch (e) {
+//       console.warn('清除联系人失败:', e && e.message);
+//     }
+
+//     res.json({ success: true });
+//   } catch (error) {
+//     logError('API:deleteContact', error);
+//     res.status(500).json({ error: error.message });
+//   }
+// });
 
 /**
  * 获取节点信息
