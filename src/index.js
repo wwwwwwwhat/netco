@@ -1,3 +1,5 @@
+import './polyfill.js';
+
 /**
  * 去中心化安全社交网络 - 主入口
  * 整合身份层、网络层、安全层
@@ -27,14 +29,20 @@ export class SecureSocialNetwork {
    * @param {string} password - 密码
    * @param {number} port - P2P监听端口
    * @param {Array} bootstrapPeers - 引导节点地址
+   * @param {Object} existingKeys - 现有的密钥对 (可选)
    */
-  async initialize(username, password, port = 0, bootstrapPeers = []) {
+  async initialize(username, password, port = 0, bootstrapPeers = [], existingKeys = null) {
     console.log(`\n🚀 正在初始化安全社交网络...`);
     console.log(`👤 用户名: ${username}`);
 
-    // 1. 生成密钥对
-    console.log(`🔐 正在生成密钥对...`);
-    this.userKeyPair = await generateKeyPairFromCredentials(username, password);
+    // 1. 生成或加载密钥对
+    if (existingKeys) {
+      console.log(`🔑 使用现有密钥对`);
+      this.userKeyPair = existingKeys;
+    } else {
+      console.log(`🔐 正在生成密钥对...`);
+      this.userKeyPair = await generateKeyPairFromCredentials(username, password);
+    }
     this.username = username;
 
     const userId = getUserId(this.userKeyPair.publicKey);
@@ -44,7 +52,7 @@ export class SecureSocialNetwork {
 
     // 2. 创建P2P节点
     console.log(`\n🌐 正在创建P2P节点...`);
-    const libp2pNode = await createP2PNode(port, bootstrapPeers);
+    const libp2pNode = await createP2PNode(port, bootstrapPeers, this.userKeyPair);
     this.p2pNode = new P2PNode(libp2pNode);
 
     // 3. 初始化消息模块

@@ -1,3 +1,5 @@
+import '../polyfill.js';
+
 /**
  * Hyperswarm 演示 - 现代化 P2P 网络
  * 可以在同一台机器上运行多个节点进行测试!

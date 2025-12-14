@@ -9,6 +9,7 @@ class SocialNetworkApp {
         this.currentChat = null; // { type: 'group'|'direct', id: string, name: string }
         this.groups = new Map();
         this.conversations = new Map();
+        this.contacts = new Map(); // Initialize contacts map
         
         this.init();
     }
@@ -19,13 +20,17 @@ class SocialNetworkApp {
     }
 
     setupEventListeners() {
-        // 登录表单
-        document.getElementById('loginForm').addEventListener('submit', (e) => {
-            e.preventDefault();
-            this.handleLogin();
+        // log in
+        document.getElementById('loginBtn').addEventListener('click', () => {
+            this.handleAuth('login');
         });
 
-        // 标签切换
+        // sign up
+        document.getElementById('registerBtn').addEventListener('click', () => {
+            this.handleAuth('register');
+        });
+
+        // log ui to sign ui
         document.querySelectorAll('.tab-btn').forEach(btn => {
             btn.addEventListener('click', () => {
                 const tab = btn.dataset.tab;
@@ -33,23 +38,23 @@ class SocialNetworkApp {
             });
         });
 
-        // 创建群组
+        // group btn
         document.getElementById('createGroupBtn').addEventListener('click', () => {
             this.showCreateGroupModal();
         });
 
-        // 加入群组
+        // participate in the group
         document.getElementById('joinGroupForm').addEventListener('submit', (e) => {
             e.preventDefault();
             this.handleJoinGroup();
         });
 
-        // 新对话
+        // new session
         document.getElementById('newChatBtn').addEventListener('click', () => {
             this.showNewChatModal();
         });
 
-        // 发送消息
+        // send msg
         document.getElementById('sendBtn').addEventListener('click', () => {
             this.sendMessage();
         });
@@ -60,17 +65,16 @@ class SocialNetworkApp {
             }
         });
 
-        // 离开聊天
+        // leave from the session
         document.getElementById('leaveChatBtn').addEventListener('click', () => {
             this.leaveCurrentChat();
         });
 
-        // 退出登录
+        // log out
         document.getElementById('logoutBtn').addEventListener('click', () => {
             this.logout();
         });
-
-        // 模态框关闭
+        
         document.querySelector('.close').addEventListener('click', () => {
             this.hideModal();
         });
@@ -81,60 +85,94 @@ class SocialNetworkApp {
                 this.hideModal();
             }
         });
+
+        // Prevent form submission
+        document.getElementById('loginForm').addEventListener('submit', (e) => {
+            e.preventDefault();
+        });
     }
 
-    checkSession() {
+    async checkSession() {
         // 检查是否有保存的会话
         const savedSession = localStorage.getItem('sessionId');
-        if (savedSession) {
+        const savedUser = localStorage.getItem('currentUser');
+
+        if (savedSession && savedUser) {
             this.sessionId = savedSession;
-            this.showMainScreen();
-            this.connectWebSocket();
-            this.loadData();
+            try {
+                this.currentUser = JSON.parse(savedUser);
+            } catch (e) {
+                console.error('解析用户信息失败', e);
+                this.logout();
+                return;
+            }
+
+            // 验证 Session 是否有效
+            try {
+                const response = await fetch(`/api/node-info?sessionId=${this.sessionId}`);
+                if (!response.ok) {
+                    throw new Error('Session invalid');
+                }
+                
+                this.showMainScreen();
+                this.connectWebSocket();
+                this.updateUserInfo();
+                this.loadData(); // Load data after session check
+            } catch (error) {
+                console.log('Session 已失效或服务器已重启', error);
+                this.logout();
+            }
         }
     }
 
-    async handleLogin() {
+    async handleAuth(type) {
         const username = document.getElementById('username').value;
         const password = document.getElementById('password').value;
         const port = document.getElementById('port').value || 0;
-
-        const errorEl = document.getElementById('loginError');
-        const statusEl = document.getElementById('loginStatus');
         
-        errorEl.classList.remove('show');
-        statusEl.classList.remove('show');
-        statusEl.textContent = '正在初始化...';
-        statusEl.classList.add('show');
+        if (!username || !password) {
+            this.showError('请输入用户名和密码');
+            return;
+        }
 
+        this.showStatus(type === 'login' ? '正在登录...' : '正在注册...');
+        
         try {
-            const response = await fetch('/api/initialize', {
+            const response = await fetch(`/api/${type}`, {
                 method: 'POST',
-                headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({ username, password, port })
+                headers: {
+                    'Content-Type': 'application/json'
+                },
+                body: JSON.stringify({
+                    username,
+                    password,
+                    port: parseInt(port)
+                })
             });
 
             const data = await response.json();
 
             if (!response.ok) {
-                throw new Error(data.error || '初始化失败');
+                throw new Error(data.error || '操作失败');
             }
 
             this.sessionId = data.sessionId;
+            this.currentUser = {
+                username: data.username,
+                publicKey: data.publicKey
+            };
+
+            // 保存会话
             localStorage.setItem('sessionId', this.sessionId);
-            localStorage.setItem('username', username);
+            localStorage.setItem('currentUser', JSON.stringify(this.currentUser));
 
-            statusEl.textContent = '初始化成功！';
-            setTimeout(() => {
-                this.showMainScreen();
-                this.connectWebSocket();
-                this.loadData();
-            }, 1000);
-
+            this.showMainScreen();
+            this.connectWebSocket();
+            this.updateUserInfo();
+            this.loadData(); // Load data after session restore
+            
         } catch (error) {
-            errorEl.textContent = error.message;
-            errorEl.classList.add('show');
-            statusEl.classList.remove('show');
+            this.showError(error.message);
         }
     }
 
@@ -186,62 +224,261 @@ class SocialNetworkApp {
             this.displayGroupMessage(message);
         } else if (message.type === 'direct_message') {
             this.displayDirectMessage(message);
+        } else if (message.type === 'contact_request') {
+            this.showRequestModal(message);
+        } else if (message.type === 'contact_added') {
+            this.loadContacts();
+        } else if (message.type === 'contact_status_change') {
+            this.updateContactStatus(message.contact);
+        }
+    }
+
+    updateContactStatus(contact) {
+        // Update local map
+        if (this.contacts) {
+            this.contacts.set(contact.publicKey, contact);
+        }
+        // Re-render list
+        this.renderContactsList();
+        
+        // If currently chatting with this contact, update input state
+        if (this.currentChat && this.currentChat.type === 'direct' && this.currentChat.publicKey === contact.publicKey) {
+            this.updateInputState(contact.status);
         }
     }
 
     async loadData() {
         await Promise.all([
             this.loadGroups(),
-            this.loadConversations(),
+            this.loadContacts(),
             this.loadNodeInfo()
         ]);
     }
-
-    async loadGroups() {
+    
+    async loadContacts() {
         try {
-            const response = await fetch(`/api/groups?sessionId=${this.sessionId}`);
-            const groups = await response.json();
+            const response = await fetch(`/api/contacts?sessionId=${this.sessionId}`);
+            const contacts = await response.json();
             
-            this.groups.clear();
-            groups.forEach(group => {
-                this.groups.set(group.id, group);
-            });
-            
-            this.renderGroupsList();
+            console.log('Loaded contacts:', contacts.length);
+
+            // Only clear if we got a valid array
+            if (Array.isArray(contacts)) {
+                this.contacts.clear();
+                contacts.forEach(contact => {
+                    this.contacts.set(contact.publicKey, contact);
+                });
+                this.renderContactsList();
+            }
         } catch (error) {
-            console.error('加载群组失败:', error);
+            console.error('加载联系人失败:', error);
         }
     }
 
-    async loadConversations() {
-        try {
-            const response = await fetch(`/api/direct-messages?sessionId=${this.sessionId}`);
-            const conversations = await response.json();
+    renderContactsList() {
+        const listEl = document.getElementById('conversationsList');
+        if (!listEl) return;
+        listEl.innerHTML = '';
+
+        if (!this.contacts) {
+            this.contacts = new Map();
+        }
+
+        this.contacts.forEach((contact) => {
+            const item = document.createElement('div');
+            item.className = 'list-item';
+            // item.dataset.convId = convId; // We don't have convId yet maybe
             
-            this.conversations.clear();
-            conversations.forEach(conv => {
-                this.conversations.set(conv.id, conv);
+            // Check status (mock logic for now, or based on p2p connection if we had it)
+            const statusClass = contact.status === 'online' ? 'status-online' : 'status-offline';
+            
+            item.innerHTML = `
+                <div style="display:flex;align-items:center;justify-content:space-between;width:100%">
+                  <div style="flex:1">
+                    <div class="list-item-title">
+                        ${contact.username}
+                        <span class="status-dot ${statusClass}"></span>
+                    </div>
+                    <div class="list-item-subtitle">ID: ${contact.peerId ? contact.peerId.substring(0, 10) + '...' : 'Unknown'}</div>
+                  </div>
+                  <div style="margin-left:8px;position:relative">
+                    <button class="contact-options-btn" title="更多" style="background:transparent;border:none;cursor:pointer;padding:6px;">⋯</button>
+                    <div class="contact-options-menu" style="display:none;position:absolute;right:0;top:28px;background:#fff;border:1px solid #ddd;border-radius:4px;box-shadow:0 2px 6px rgba(0,0,0,0.1);z-index:50;">
+                      <div class="contact-options-item" data-action="delete" style="padding:8px 12px;cursor:pointer;white-space:nowrap;">删除联系人</div>
+                    </div>
+                  </div>
+                </div>
+            `;
+
+            // Open chat when clicking the item area (but not the options)
+            item.addEventListener('click', (e) => {
+                // If click came from options button or menu, ignore
+                if (e.target.closest('.contact-options-btn') || e.target.closest('.contact-options-menu')) return;
+                this.openDirectChat(contact.publicKey, contact.username);
+            });
+
+            // Options button toggle
+            // const btn = item.querySelector('.contact-options-btn');
+            // const menu = item.querySelector('.contact-options-menu');
+            // if (btn && menu) {
+            //     btn.addEventListener('click', (e) => {
+            //         e.stopPropagation();
+            //         // hide other open menus
+            //         document.querySelectorAll('.contact-options-menu').forEach(m => { if (m !== menu) m.style.display = 'none'; });
+            //         menu.style.display = menu.style.display === 'block' ? 'none' : 'block';
+            //     });
+
+            //     // Click on menu items
+            //     menu.addEventListener('click', (e) => {
+            //         e.stopPropagation();
+            //         const actionEl = e.target.closest('.contact-options-item');
+            //         if (!actionEl) return;
+            //         const action = actionEl.dataset.action;
+            //         if (action === 'delete') {
+            //             this.deleteContact(contact.publicKey);
+            //             menu.style.display = 'none';
+            //         }
+            //     });
+            // }
+
+            // // Click outside to close menus
+            // document.addEventListener('click', () => {
+            //     document.querySelectorAll('.contact-options-menu').forEach(m => m.style.display = 'none');
+            // });
+
+            listEl.appendChild(item);
+        });
+    }
+
+    // async deleteContact(targetPublicKey) {
+    //     if (!confirm('确认删除该联系人吗？')) return;
+
+    //     try {
+    //         const res = await fetch('/api/contacts/delete', {
+    //             method: 'POST',
+    //             headers: { 'Content-Type': 'application/json' },
+    //             body: JSON.stringify({ sessionId: this.sessionId, targetPublicKey })
+    //         });
+
+    //         const data = await res.json();
+    //         if (!res.ok) throw new Error(data.error || '删除失败');
+
+    //         // Remove from local map and UI
+    //         this.contacts.delete(targetPublicKey);
+    //         if (this.currentChat && this.currentChat.type === 'direct' && this.currentChat.publicKey === targetPublicKey) {
+    //             this.currentChat = null;
+    //             document.getElementById('emptyState').classList.remove('hidden');
+    //             document.getElementById('chatView').classList.add('hidden');
+    //         }
+    //         this.renderContactsList();
+    //     } catch (err) {
+    //         alert('删除联系人失败: ' + err.message);
+    //     }
+    // }
+    
+    showRequestModal(request) {
+        const modal = document.getElementById('requestModal');
+        const infoEl = document.getElementById('requestInfo');
+        
+        infoEl.innerHTML = `
+            <p><strong>用户名:</strong> ${request.sender.username}</p>
+            <p><strong>ID:</strong> ${request.sender.peerId}</p>
+            <p><strong>公钥:</strong> <span style="font-size: 10px; word-break: break-all;">${request.sender.publicKey}</span></p>
+        `;
+        
+        modal.classList.remove('hidden');
+        
+        // Remove old listeners to avoid duplicates (simple way)
+        const acceptBtn = document.getElementById('acceptRequestBtn');
+        const rejectBtn = document.getElementById('rejectRequestBtn');
+        
+        const newAcceptBtn = acceptBtn.cloneNode(true);
+        const newRejectBtn = rejectBtn.cloneNode(true);
+        
+        acceptBtn.parentNode.replaceChild(newAcceptBtn, acceptBtn);
+        rejectBtn.parentNode.replaceChild(newRejectBtn, rejectBtn);
+        
+        newAcceptBtn.addEventListener('click', () => {
+            this.respondToRequest(request, true);
+            modal.classList.add('hidden');
+        });
+        
+        newRejectBtn.addEventListener('click', () => {
+            this.respondToRequest(request, false);
+            modal.classList.add('hidden');
+        });
+    }
+    
+    async respondToRequest(request, accepted) {
+        try {
+            await fetch('/api/contacts/respond', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({
+                    sessionId: this.sessionId,
+                    targetPublicKey: request.sender.publicKey,
+                    targetUsername: request.sender.username,
+                    targetPeerId: request.sender.peerId,
+                    accepted
+                })
             });
             
-            this.renderConversationsList();
+            if (accepted) {
+                await this.loadContacts();
+            }
         } catch (error) {
-            console.error('加载对话失败:', error);
+            console.error('响应请求失败:', error);
         }
     }
+
+    // ...existing code...
+
 
     async loadNodeInfo() {
         try {
             const response = await fetch(`/api/node-info?sessionId=${this.sessionId}`);
+            if (!response.ok) throw new Error('Failed to fetch node info');
             const info = await response.json();
             
             // 获取公钥
             const publicKeyResponse = await fetch(`/api/public-key?sessionId=${this.sessionId}`);
+            if (!publicKeyResponse.ok) throw new Error('Failed to fetch public key');
             const publicKeyData = await publicKeyResponse.json();
             
+            const peerIdDisplay = info.peerId ? info.peerId : 'Unknown';
+            
+            let addressesHtml = '';
+            if (info.addresses && info.addresses.length > 0) {
+                addressesHtml = info.addresses.map(addr => `<div style="font-size: 11px; word-break: break-all; margin-bottom: 4px;">${addr}</div>`).join('');
+            } else {
+                addressesHtml = '<div>N/A</div>';
+            }
+
+            const connectedPeersCount = info.connectedPeers ? info.connectedPeers.length : 0;
+
             const infoHtml = `
-                <div><strong>节点ID:</strong> ${info.peerId.substring(0, 20)}...</div>
-                <div><strong>连接数:</strong> ${info.connectedPeers.length}</div>
-                <div><strong>地址:</strong> ${info.addresses[0] || 'N/A'}</div>
+                <div style="margin-bottom: 15px;">
+                    <strong>节点ID:</strong>
+                    <div style="font-size: 11px; word-break: break-all; background: #f0f0f0; padding: 5px; border-radius: 4px;">${peerIdDisplay}</div>
+                </div>
+                <div style="margin-bottom: 15px;">
+                    <strong>连接数:</strong> ${connectedPeersCount}
+                </div>
+                <div style="margin-bottom: 15px;">
+                    <strong>监听地址:</strong>
+                    <div style="background: #f0f0f0; padding: 5px; border-radius: 4px; max-height: 100px; overflow-y: auto;">
+                        ${addressesHtml}
+                    </div>
+                </div>
+                
+                <div style="margin-bottom: 15px; padding-top: 15px; border-top: 1px solid #e0e0e0;">
+                    <strong>手动连接节点:</strong>
+                    <form id="manualConnectForm" style="margin-top: 10px;">
+                        <input type="text" id="peerMultiaddr" placeholder="/ip4/..." style="width: 100%; padding: 8px; margin-bottom: 8px; border: 1px solid #ddd; border-radius: 4px;">
+                        <button type="submit" class="btn btn-primary btn-small" style="width: 100%;">连接</button>
+                    </form>
+                </div>
+
                 <div style="margin-top: 15px; padding-top: 15px; border-top: 1px solid #e0e0e0;">
                     <strong>我的公钥:</strong>
                     <div style="background: #f0f0f0; padding: 8px; border-radius: 4px; margin-top: 5px; font-size: 11px; word-break: break-all; cursor: pointer;" onclick="navigator.clipboard.writeText('${publicKeyData.publicKey}'); alert('公钥已复制到剪贴板');">
@@ -250,9 +487,54 @@ class SocialNetworkApp {
                     <div style="font-size: 11px; color: #666; margin-top: 5px;">点击复制</div>
                 </div>
             `;
-            document.getElementById('networkInfo').innerHTML = infoHtml;
+            const networkInfoEl = document.getElementById('networkInfo');
+            if (networkInfoEl) {
+                networkInfoEl.innerHTML = infoHtml;
+                
+                // Add event listener for manual connect form
+                const form = document.getElementById('manualConnectForm');
+                if (form) {
+                    form.addEventListener('submit', async (e) => {
+                        e.preventDefault();
+                        const multiaddr = document.getElementById('peerMultiaddr').value.trim();
+                        if (!multiaddr) return;
+                        
+                        try {
+                            const btn = form.querySelector('button');
+                            const originalText = btn.textContent;
+                            btn.textContent = '连接中...';
+                            btn.disabled = true;
+                            
+                            const res = await fetch('/api/network/connect', {
+                                method: 'POST',
+                                headers: { 'Content-Type': 'application/json' },
+                                body: JSON.stringify({ sessionId: this.sessionId, multiaddr })
+                            });
+                            
+                            if (!res.ok) {
+                                const data = await res.json();
+                                throw new Error(data.error || '连接失败');
+                            }
+                            
+                            alert('连接成功!');
+                            document.getElementById('peerMultiaddr').value = '';
+                            this.loadNodeInfo(); // Refresh info
+                        } catch (err) {
+                            alert('连接失败: ' + err.message);
+                        } finally {
+                            const btn = form.querySelector('button');
+                            btn.textContent = '连接';
+                            btn.disabled = false;
+                        }
+                    });
+                }
+            }
         } catch (error) {
             console.error('加载节点信息失败:', error);
+            const networkInfoEl = document.getElementById('networkInfo');
+            if (networkInfoEl) {
+                networkInfoEl.innerHTML = `<div style="color: red;">加载失败: ${error.message}</div>`;
+            }
         }
     }
 
@@ -306,6 +588,11 @@ class SocialNetworkApp {
             content.classList.remove('active');
         });
         document.getElementById(`${tab}Tab`).classList.add('active');
+
+        // 如果切换到网络标签，刷新节点信息
+        if (tab === 'network') {
+            this.loadNodeInfo();
+        }
     }
 
     showCreateGroupModal() {
@@ -381,17 +668,13 @@ class SocialNetworkApp {
     showNewChatModal() {
         const modalBody = document.getElementById('modalBody');
         modalBody.innerHTML = `
-            <h2>开始新对话</h2>
+            <h2>添加好友</h2>
             <form id="newChatForm">
                 <div class="form-group">
                     <label>对方公钥</label>
                     <textarea id="peerPublicKey" required placeholder="粘贴对方的公钥" rows="3"></textarea>
                 </div>
-                <div class="form-group">
-                    <label>对方用户名</label>
-                    <input type="text" id="peerName" required placeholder="输入对方用户名">
-                </div>
-                <button type="submit" class="btn btn-primary">开始对话</button>
+                <button type="submit" class="btn btn-primary">发送好友请求</button>
             </form>
         `;
 
@@ -400,91 +683,198 @@ class SocialNetworkApp {
         document.getElementById('newChatForm').addEventListener('submit', async (e) => {
             e.preventDefault();
             const peerPublicKey = document.getElementById('peerPublicKey').value.trim();
-            const peerName = document.getElementById('peerName').value;
-            await this.startConversation(peerPublicKey, peerName);
+            
+            await this.sendContactRequest(peerPublicKey);
             this.hideModal();
         });
     }
 
-    async startConversation(peerPublicKey, peerName) {
+    async sendContactRequest(targetPublicKey) {
         try {
-            const response = await fetch('/api/direct-messages', {
+            const response = await fetch('/api/contacts/request', {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({ sessionId: this.sessionId, peerPublicKey, peerName })
+                body: JSON.stringify({ 
+                    sessionId: this.sessionId, 
+                    targetPublicKey
+                })
             });
 
-            const data = await response.json();
+            if (!response.ok) {
+                const data = await response.json();
+                throw new Error(data.error || '请求失败');
+            }
             
-            await this.loadConversations();
-            this.openDirectChat(data.conversationId, peerName);
+            alert('好友请求已发送！等待对方确认。');
         } catch (error) {
-            alert('开始对话失败: ' + error.message);
+            alert('发送请求失败: ' + error.message);
         }
     }
 
-    openGroupChat(groupId, groupName) {
-        this.currentChat = { type: 'group', id: groupId, name: groupName };
-        this.showChatView();
-        this.updateActiveListItem('groupsList', groupId);
+    async openDirectChat(peerPublicKey, peerName) {
+        try {
+            // Get or create conversation ID
+            const response = await fetch('/api/direct-messages', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ 
+                    sessionId: this.sessionId, 
+                    peerPublicKey, 
+                    peerName 
+                })
+            });
+            
+            if (!response.ok) throw new Error('Failed to start chat');
+            
+            const data = await response.json();
+            const conversationId = data.conversationId;
+
+            this.currentChat = {
+                type: 'direct',
+                id: conversationId,
+                name: peerName,
+                publicKey: peerPublicKey
+            };
+
+            this.updateChatHeader(peerName, '私聊');
+            this.clearMessages();
+            
+            // Check contact status and update input
+            const contact = this.contacts.get(peerPublicKey);
+            this.updateInputState(contact ? contact.status : 'offline');
+
+            await this.loadHistory(peerPublicKey, 'direct');
+        } catch (error) {
+            console.error('打开对话失败:', error);
+            alert('无法打开对话: ' + error.message);
+        }
     }
 
-    openDirectChat(conversationId, peerName) {
-        this.currentChat = { type: 'direct', id: conversationId, name: peerName };
-        this.showChatView();
-        this.updateActiveListItem('conversationsList', conversationId);
-    }
-
-    showChatView() {
-        document.getElementById('emptyState').classList.add('hidden');
-        document.getElementById('chatView').classList.remove('hidden');
-        document.getElementById('chatTitle').textContent = this.currentChat.name;
+    updateInputState(status) {
+        const input = document.getElementById('messageInput');
+        const btn = document.getElementById('sendBtn');
         
-        // 清空消息
-        document.getElementById('messagesContainer').innerHTML = '';
+        if (status === 'online') {
+            input.disabled = false;
+            input.placeholder = "输入消息...";
+            btn.disabled = false;
+            btn.classList.remove('btn-secondary');
+            btn.classList.add('btn-primary');
+        } else {
+            input.disabled = true;
+            input.placeholder = "对方不在线，无法发送消息";
+            btn.disabled = true;
+            btn.classList.remove('btn-primary');
+            btn.classList.add('btn-secondary');
+        }
     }
 
-    updateActiveListItem(listId, activeId) {
-        document.querySelectorAll(`#${listId} .list-item`).forEach(item => {
-            item.classList.remove('active');
-            if (item.dataset.groupId === activeId || item.dataset.convId === activeId) {
-                item.classList.add('active');
+    async openGroupChat(groupId, groupName) {
+        this.currentChat = {
+            type: 'group',
+            id: groupId,
+            name: groupName
+        };
+
+        this.updateChatHeader(groupName, '群组');
+        this.clearMessages();
+        this.updateActiveListItem('groupsList', groupId);
+        
+        await this.loadHistory(groupId, 'group');
+    }
+
+    async loadHistory(targetId, type) {
+        try {
+            const response = await fetch(`/api/history?sessionId=${this.sessionId}&targetId=${encodeURIComponent(targetId)}&type=${type}`);
+            if (response.ok) {
+                const history = await response.json();
+                history.forEach(msg => {
+                    this.displayMessage({
+                        senderName: msg.senderName,
+                        content: msg.content,
+                        timestamp: new Date(msg.date).getTime(),
+                        isOwn: msg.senderName === this.currentUser.username
+                    });
+                });
             }
-        });
+        } catch (error) {
+            console.error('Failed to load history:', error);
+        }
+    }
+
+    async openGroupChat(groupId, groupName) {
+        this.currentChat = {
+            type: 'group',
+            id: groupId,
+            name: groupName
+        };
+
+        this.updateChatHeader(groupName, '群组');
+        this.clearMessages();
+        this.updateActiveListItem('groupsList', groupId);
+        
+        await this.loadHistory(groupId, 'group');
+    }
+
+    async loadHistory(targetId, type) {
+        try {
+            const response = await fetch(`/api/history?sessionId=${this.sessionId}&targetId=${encodeURIComponent(targetId)}&type=${type}`);
+            if (response.ok) {
+                const history = await response.json();
+                history.forEach(msg => {
+                    this.displayMessage({
+                        senderName: msg.senderName,
+                        content: msg.content,
+                        timestamp: new Date(msg.date).getTime(),
+                        isOwn: msg.senderName === this.currentUser.username
+                    });
+                });
+            }
+        } catch (error) {
+            console.error('Failed to load history:', error);
+        }
     }
 
     async sendMessage() {
-        if (!this.currentChat) return;
-
         const input = document.getElementById('messageInput');
         const content = input.value.trim();
-        if (!content) return;
-
+        
+        if (!content || !this.currentChat) return;
+        
         try {
+            let url;
             if (this.currentChat.type === 'group') {
-                const response = await fetch(`/api/groups/${this.currentChat.id}/messages`, {
-                    method: 'POST',
-                    headers: { 'Content-Type': 'application/json' },
-                    body: JSON.stringify({ sessionId: this.sessionId, content })
-                });
+                url = `/api/groups/${this.currentChat.id}/messages`;
             } else {
-                const response = await fetch(`/api/direct-messages/${this.currentChat.id}/messages`, {
-                    method: 'POST',
-                    headers: { 'Content-Type': 'application/json' },
-                    body: JSON.stringify({ sessionId: this.sessionId, content })
-                });
+                url = `/api/direct-messages/${this.currentChat.id}/messages`;
             }
-
-            // 显示自己发送的消息
+            
+            const response = await fetch(url, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ 
+                    sessionId: this.sessionId, 
+                    content 
+                })
+            });
+            
+            if (!response.ok) {
+                throw new Error('发送失败');
+            }
+            
+            // 清空输入框
+            input.value = '';
+            
+            // 手动添加到UI
             this.displayMessage({
-                senderName: localStorage.getItem('username'),
+                senderName: this.currentUser.username,
                 content: content,
                 timestamp: Date.now(),
                 isOwn: true
             });
-
-            input.value = '';
+            
         } catch (error) {
+            console.error('发送消息错误:', error);
             alert('发送消息失败: ' + error.message);
         }
     }
@@ -501,7 +891,15 @@ class SocialNetworkApp {
     }
 
     displayDirectMessage(message) {
-        if (this.currentChat && this.currentChat.type === 'direct' && this.currentChat.id === message.conversationId) {
+        // Check if the message belongs to the current chat
+        // The message might not have conversationId if it comes from P2P directly
+        // So we check if the sender matches the current chat's public key
+        const isCurrentChat = this.currentChat && 
+                              this.currentChat.type === 'direct' && 
+                              (this.currentChat.id === message.conversationId || 
+                               this.currentChat.publicKey === message.senderPublicKey);
+
+        if (isCurrentChat) {
             this.displayMessage({
                 senderName: message.senderName,
                 content: message.content,
@@ -567,10 +965,75 @@ class SocialNetworkApp {
             this.ws.close();
         }
         localStorage.removeItem('sessionId');
-        localStorage.removeItem('username');
+        localStorage.removeItem('currentUser'); // Remove currentUser as well
         this.sessionId = null;
+        this.currentUser = null;
         document.getElementById('mainScreen').classList.add('hidden');
         document.getElementById('loginScreen').classList.remove('hidden');
+        
+        // Clear input fields
+        document.getElementById('username').value = '';
+        document.getElementById('password').value = '';
+        document.getElementById('port').value = '';
+        
+        // Clear status messages
+        const errorEl = document.getElementById('loginError');
+        const statusEl = document.getElementById('loginStatus');
+        if (errorEl) errorEl.classList.remove('show');
+        if (statusEl) statusEl.classList.remove('show');
+    }
+
+    showError(message) {
+        const errorEl = document.getElementById('loginError');
+        const statusEl = document.getElementById('loginStatus');
+        
+        errorEl.textContent = message;
+        errorEl.classList.add('show');
+        statusEl.classList.remove('show');
+    }
+
+    showStatus(message) {
+        const errorEl = document.getElementById('loginError');
+        const statusEl = document.getElementById('loginStatus');
+        
+        statusEl.textContent = message;
+        statusEl.classList.add('show');
+        errorEl.classList.remove('show');
+    }
+
+    updateUserInfo() {
+        if (this.currentUser) {
+            document.getElementById('currentUsername').textContent = this.currentUser.username;
+            
+            const pubKey = this.currentUser.publicKey;
+            const idEl = document.getElementById('currentUserId');
+            
+            idEl.textContent = `ID: ${pubKey}`;
+            idEl.title = "点击复制完整公钥";
+            idEl.style.cursor = "pointer";
+            
+            // 移除旧的事件监听器（如果有）
+            const newIdEl = idEl.cloneNode(true);
+            idEl.parentNode.replaceChild(newIdEl, idEl);
+            
+            newIdEl.onclick = () => {
+                navigator.clipboard.writeText(pubKey).then(() => {
+                    alert('公钥已复制到剪贴板');
+                });
+            };
+            
+            this.loadData();
+        }
+    }
+
+    updateChatHeader(name, type) {
+        document.getElementById('chatView').classList.remove('hidden');
+        document.getElementById('chatTitle').textContent = `${name} (${type})`;
+        document.getElementById('emptyState').classList.add('hidden');
+    }
+
+    clearMessages() {
+        document.getElementById('messagesContainer').innerHTML = '';
     }
 }
 

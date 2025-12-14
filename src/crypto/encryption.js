@@ -5,9 +5,11 @@
 
 import nacl from 'tweetnacl';
 import naclUtil from 'tweetnacl-util';
+import crypto from 'crypto';
+import ed2curve from 'ed2curve';
 
-const encode = naclUtil.encodeBase64;
-const decode = naclUtil.decodeBase64;
+const b64_encode = naclUtil.encodeBase64;
+const b64_decode = naclUtil.decodeBase64;
 
 /**
  * 将签名密钥转换为加密密钥
@@ -20,8 +22,8 @@ function convertSignKeyToEncryptKey(signKey) {
 /**
  * 加密消息
  * @param {string} message - 要加密的消息
- * @param {Uint8Array} recipientPublicKey - 接收方的公钥(原始格式)
- * @param {Uint8Array} senderSecretKey - 发送方的私钥(原始格式)
+ * @param {Uint8Array} recipientPublicKey - 接收方的公钥(Ed25519原始格式)
+ * @param {Uint8Array} senderSecretKey - 发送方的私钥(Ed25519原始格式)
  * @returns {string} Base64编码的加密消息
  */
 export function encryptMessage(message, recipientPublicKey, senderSecretKey) {
@@ -31,15 +33,13 @@ export function encryptMessage(message, recipientPublicKey, senderSecretKey) {
   // 生成随机nonce (24字节)
   const nonce = nacl.randomBytes(24);
 
-  // 从签名密钥派生加密密钥
-  const senderKeyPair = nacl.sign.keyPair.fromSecretKey(senderSecretKey);
-  const senderEncryptSecret = nacl.box.keyPair.fromSecretKey(
-    senderKeyPair.secretKey.slice(0, 32)
-  ).secretKey;
+  // 转换密钥 Ed25519 -> Curve25519
+  const senderEncryptSecret = ed2curve.convertSecretKey(senderSecretKey);
+  const recipientEncryptPublic = ed2curve.convertPublicKey(recipientPublicKey);
 
-  const recipientEncryptPublic = nacl.sign.keyPair.fromSecretKey(
-    new Uint8Array([...recipientPublicKey, ...new Uint8Array(32)])
-  ).publicKey;
+  if (!senderEncryptSecret || !recipientEncryptPublic) {
+      throw new Error('密钥转换失败: 无效的 Ed25519 密钥');
+  }
 
   // 使用 Box 加密
   const encryptedMessage = nacl.box(
@@ -54,53 +54,51 @@ export function encryptMessage(message, recipientPublicKey, senderSecretKey) {
   fullMessage.set(nonce);
   fullMessage.set(encryptedMessage, nonce.length);
 
-  return encode(fullMessage);
+  return b64_encode(fullMessage);
 }
 
 /**
  * 解密消息
- * @param {string} encryptedMessage - Base64编码的加密消息
- * @param {Uint8Array} senderPublicKey - 发送方的公钥(原始格式)
- * @param {Uint8Array} recipientSecretKey - 接收方的私钥(原始格式)
- * @returns {string|null} 解密后的消息,失败返回null
+ * @param {string} encryptedMessageBase64 - Base64编码的加密消息
+ * @param {Uint8Array} senderPublicKey - 发送方的公钥(Ed25519原始格式)
+ * @param {Uint8Array} recipientSecretKey - 接收方的私钥(Ed25519原始格式)
+ * @returns {string|null} 解密后的消息，失败返回null
  */
-export function decryptMessage(encryptedMessage, senderPublicKey, recipientSecretKey) {
+export function decryptMessage(encryptedMessageBase64, senderPublicKey, recipientSecretKey) {
   try {
-    // 解码Base64
-    const fullMessage = decode(encryptedMessage);
+    const fullMessage = b64_decode(encryptedMessageBase64);
+    
+    if (fullMessage.length < 24) return null;
 
-    // 提取nonce和加密内容
     const nonce = fullMessage.slice(0, 24);
-    const encrypted = fullMessage.slice(24);
+    const encryptedMessage = fullMessage.slice(24);
 
-    // 从签名密钥派生加密密钥
-    const recipientKeyPair = nacl.sign.keyPair.fromSecretKey(recipientSecretKey);
-    const recipientEncryptSecret = nacl.box.keyPair.fromSecretKey(
-      recipientKeyPair.secretKey.slice(0, 32)
-    ).secretKey;
+    // 转换密钥 Ed25519 -> Curve25519
+    const recipientEncryptSecret = ed2curve.convertSecretKey(recipientSecretKey);
+    const senderEncryptPublic = ed2curve.convertPublicKey(senderPublicKey);
 
-    const senderEncryptPublic = nacl.sign.keyPair.fromSecretKey(
-      new Uint8Array([...senderPublicKey, ...new Uint8Array(32)])
-    ).publicKey;
+    if (!recipientEncryptSecret || !senderEncryptPublic) {
+        console.error('密钥转换失败');
+        return null;
+    }
 
-    // 解密
-    const decrypted = nacl.box.open(
-      encrypted,
+    const decryptedBytes = nacl.box.open(
+      encryptedMessage,
       nonce,
       senderEncryptPublic,
       recipientEncryptSecret
     );
 
-    if (!decrypted) {
-      return null;
-    }
+    if (!decryptedBytes) return null;
 
-    return new TextDecoder().decode(decrypted);
+    return new TextDecoder().decode(decryptedBytes);
   } catch (error) {
-    console.error('解密失败:', error.message);
+    console.error('解密失败:', error);
     return null;
   }
 }
+
+
 
 /**
  * 生成消息标签 (Tag)
@@ -142,7 +140,7 @@ export function symmetricEncrypt(message, sharedKey) {
   fullMessage.set(nonce);
   fullMessage.set(encrypted, nonce.length);
 
-  return encode(fullMessage);
+  return b64_encode(fullMessage);
 }
 
 /**
@@ -153,7 +151,7 @@ export function symmetricEncrypt(message, sharedKey) {
  */
 export function symmetricDecrypt(encryptedMessage, sharedKey) {
   try {
-    const fullMessage = decode(encryptedMessage);
+    const fullMessage = b64_decode(encryptedMessage);
     const nonce = fullMessage.slice(0, 24);
     const encrypted = fullMessage.slice(24);
 
