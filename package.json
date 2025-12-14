@@ -9,9 +9,12 @@
     "server": "node src/server.js",
     "demo": "node src/examples/hyperswarm-demo.js",
     "test": "node src/examples/hyperswarm-demo.js",
+    "net-co": "node src/clients/main-client.js",
     "alice": "node src/clients/alice.js",
     "bob": "node src/clients/bob.js",
-    "eve": "node src/clients/eve.js"
+    "eve": "node src/clients/eve.js",
+    "alice-improved": "node src/clients/alice-improved.js",
+    "bob-improved": "node src/clients/bob-improved.js"
   },
   "keywords": [
     "hyperswarm",

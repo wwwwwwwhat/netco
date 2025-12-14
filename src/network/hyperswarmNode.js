@@ -145,8 +145,10 @@ export class HyperswarmNode {
       }
     }
 
-    console.log(`📤 发送消息到 ${topic}: ${message.substring(0, 40)}...`);
-    console.log(`   → 发送到 ${sentCount} 个连接`);
+    // 简化日志：只显示主题和连接数，不显示消息内容
+    if (sentCount > 0) {
+      console.log(`📤 发送到 ${topic} (${sentCount} 个连接)`);
+    }
   }
 
   /**
