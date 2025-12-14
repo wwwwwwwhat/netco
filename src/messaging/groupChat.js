@@ -51,11 +51,20 @@ export class GroupChat {
       id: groupId,
       name: groupName,
       sharedKey: sharedKey,
-      sharedKeyBase64: sharedKey.toString('base64'),
-      members: [this.userKeyPair.publicKey],
+      sharedKeyBase64: sharedKeyBase64,
+      members: [], // 这里应该存储 Hex 格式的公钥
       topic: topic,
       createdAt: Date.now()
     };
+    
+    // 转换自己的公钥为 Hex 存储
+    let myPublicKeyHex;
+    if (typeof this.userKeyPair.publicKey === 'string') {
+        myPublicKeyHex = Buffer.from(this.userKeyPair.publicKey, 'base64').toString('hex');
+    } else {
+        myPublicKeyHex = Buffer.from(this.userKeyPair.publicKey).toString('hex');
+    }
+    group.members.push(myPublicKeyHex);
 
     this.groups.set(groupId, group);
 
@@ -184,19 +193,29 @@ export class GroupChat {
     const encryptedContent = symmetricEncrypt(content, group.sharedKey);
 
     // 构造消息载荷
+    let myPublicKeyHex;
+    if (typeof this.userKeyPair.publicKey === 'string') {
+        myPublicKeyHex = Buffer.from(this.userKeyPair.publicKey, 'base64').toString('hex');
+    } else {
+        myPublicKeyHex = Buffer.from(this.userKeyPair.publicKey).toString('hex');
+    }
+
     const payload = {
       type: 'group_message',
       groupId: groupId,
-      senderPublicKey: this.userKeyPair.publicKey,
+      senderPublicKey: myPublicKeyHex,
       senderName: senderName,
       encryptedContent: encryptedContent,
       timestamp: Date.now()
     };
 
     // 发布到群组主题
+    // 尝试使用 waitForSubscribersAndPublish 如果存在 (在 DirectMessage 中实现过，这里可能需要类似逻辑)
+    // 但由于 GroupChat 直接持有 p2pNode，我们可以在 p2pNode 中实现通用等待逻辑
+    // 或者直接在这里实现简单的重试
+    
+    console.log(`✉️  正在发送群组消息到 [${group.name}]...`);
     await this.p2pNode.publish(group.topic, JSON.stringify(payload));
-
-    console.log(`✉️  已发送群组消息到 [${group.name}]`);
   }
 
   /**

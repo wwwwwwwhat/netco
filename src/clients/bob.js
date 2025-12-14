@@ -3,6 +3,7 @@
  * 在第二个终端窗口中运行
  */
 
+import '../polyfill.js';
 import HyperswarmNode from '../network/hyperswarmNode.js';
 import { generateKeyPairFromCredentials } from '../crypto/identity.js';
 import { symmetricEncrypt, symmetricDecrypt } from '../crypto/encryption.js';

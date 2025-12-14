@@ -29,7 +29,10 @@
                     <input type="number" id="port" placeholder="留空自动分配">
                 </div>
                 
-                <button type="submit" class="btn btn-primary">登录 / 注册</button>
+                <div class="auth-buttons">
+                    <button type="button" id="loginBtn" class="btn btn-primary">登录</button>
+                    <button type="button" id="registerBtn" class="btn btn-danger">注册</button>
+                </div>
             </form>
             
             <div id="loginError" class="error-message"></div>
@@ -120,6 +123,18 @@
         <div class="modal-content">
             <span class="close">&times;</span>
             <div id="modalBody"></div>
+        </div>
+    </div>
+
+    <!-- 请求确认模态框 -->
+    <div id="requestModal" class="modal hidden">
+        <div class="modal-content">
+            <h3>收到好友请求</h3>
+            <div id="requestInfo"></div>
+            <div class="modal-actions">
+                <button id="acceptRequestBtn" class="btn btn-primary">接受</button>
+                <button id="rejectRequestBtn" class="btn btn-danger">拒绝</button>
+            </div>
         </div>
     </div>
 
