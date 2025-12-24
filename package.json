@@ -5,16 +5,9 @@
   "main": "src/index.js",
   "type": "module",
   "scripts": {
-    "start": "node src/index.js",
-    "server": "node src/server.js",
-    "demo": "node src/examples/hyperswarm-demo.js",
-    "test": "node src/examples/hyperswarm-demo.js",
+    "start": "node src/clients/main-client.js",
     "net-co": "node src/clients/main-client.js",
-    "alice": "node src/clients/alice.js",
-    "bob": "node src/clients/bob.js",
-    "eve": "node src/clients/eve.js",
-    "alice-improved": "node src/clients/alice-improved.js",
-    "bob-improved": "node src/clients/bob-improved.js"
+    "eve": "node src/clients/eve-listener.js"
   },
   "keywords": [
     "hyperswarm",

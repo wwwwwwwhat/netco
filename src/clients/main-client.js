@@ -130,6 +130,27 @@ async function attemptLogin() {
   const { promise: conflictPromise, reject: rejectLogin } = Promise.withResolvers();
   let conflictHandled = false;
 
+  // 定期广播定时器（稍后初始化）
+  let broadcastInterval = null;
+
+  // 清理函数（需要在使用前定义）
+  const cleanup = async () => {
+    if (broadcastInterval) {
+      clearInterval(broadcastInterval);
+    }
+    try {
+      await node.publish(USER_REGISTRY_TOPIC, JSON.stringify({
+        type: 'user_logout',
+        username: credentials.username,
+        sessionId,
+        timestamp: Date.now()
+      }), 'system', true);
+    } catch (e) {
+      // 忽略发送失败
+    }
+    await node.stop();
+  };
+
   console.log(`\n🔊 正在加入用户注册表...`);
   await node.joinTopic(USER_REGISTRY_TOPIC, async (msg) => {
     try {
@@ -146,35 +167,42 @@ async function attemptLogin() {
 
           // 验证密钥是否匹配（同一密码会生成相同密钥）
           if (publicKey === userKeys.publicKey) {
-            // 密码相同 - 该账户已登录
+            // 密码相同 - 通过时间戳判断谁先登录
             if (!hasAlertedConflict && !conflictHandled) {
-              console.log(`\n⚠️  该账户已登录`);
-              console.log(`   提示: 该账号正在其他设备使用中`);
+              // 比较登录时间：对方先登录（时间戳更小）= 我后登录，我应该退出
+              if (remoteTimestamp < loginTimestamp) {
+                // 对方先登录，我是新登录的，我应该退出
+                console.log(`\n⚠️  该账户已登录`);
+                console.log(`   提示: 该账号正在其他设备使用中`);
 
-              // 标记已处理
-              hasAlertedConflict = true;
-              conflictHandled = true;
+                // 标记已处理
+                hasAlertedConflict = true;
+                conflictHandled = true;
 
-              // 发送警告给对方（老用户）
-              await node.publish(USER_REGISTRY_TOPIC, JSON.stringify({
-                type: 'login_alert',
-                username,
-                message: '您的账号尝试在另一终端登录，密码可能泄露',
-                timestamp: Date.now()
-              }));
+                // 发送警告给对方（老用户）
+                await node.publish(USER_REGISTRY_TOPIC, JSON.stringify({
+                  type: 'login_alert',
+                  username,
+                  message: '您的账号尝试在另一终端登录，密码可能泄露',
+                  timestamp: Date.now()
+                }), 'system', true);
 
-              // 标记需要退出并重新登录
-              shouldExit = true;
-              console.log(`\n⏳ 3秒后返回登录界面...`);
-              setTimeout(async () => {
-                await node.stop();
-                const error = new Error('该账户已登录');
-                error.code = 'WRONG_PASSWORD';
-                rejectLogin(error);
-              }, 3000);
+                // 标记需要退出并重新登录
+                shouldExit = true;
+                console.log(`\n⏳ 3秒后返回登录界面...`);
+                setTimeout(async () => {
+                  await cleanup();
+                  const error = new Error('该账户已登录');
+                  error.code = 'WRONG_PASSWORD';
+                  rejectLogin(error);
+                }, 3000);
+              } else {
+                // 我先登录，对方后登录，我保持在线，不做任何操作
+                // 对方会自动退出
+              }
             }
           } else {
-            // 密钥不同 - 该用户已存在
+            // 密钥不同 - 该用户已存在（密码错误）
             if (!hasAlertedConflict && !conflictHandled) {
               console.log(`\n❌ 该用户已存在`);
               console.log(`   提示: 该用户名已被其他人使用`);
@@ -187,7 +215,7 @@ async function attemptLogin() {
               shouldExit = true;
               console.log(`\n⏳ 3秒后返回登录界面...`);
               setTimeout(async () => {
-                await node.stop();
+                await cleanup();
                 const error = new Error('该用户已存在');
                 error.code = 'WRONG_PASSWORD';
                 rejectLogin(error);
@@ -198,24 +226,28 @@ async function attemptLogin() {
 
         // 更新在线用户列表（不包括自己）
         if (username !== credentials.username) {
+          // 只在首次发现时打印
+          const isNewUser = !onlineUsers.has(username);
           onlineUsers.set(username, {
             publicKey,
             sessionId: remoteSessionId,
             timestamp: remoteTimestamp
           });
-          console.log(`\n👤 发现在线用户: ${username}`);
+          if (isNewUser) {
+            console.log(`\n👤 发现在线用户: ${username}`);
+          }
         }
       }
 
       if (data.type === 'user_list_request') {
-        // 有人请求用户列表，回复自己的信息
+        // 有人请求用户列表，回复自己的信息（静默模式）
         await node.publish(USER_REGISTRY_TOPIC, JSON.stringify({
           type: 'user_login',
           username: credentials.username,
           publicKey: userKeys.publicKey,
           sessionId,
           timestamp: Date.now()
-        }));
+        }), 'system', true);
       }
 
       if (data.type === 'login_alert' && data.username === credentials.username) {
@@ -278,27 +310,15 @@ async function attemptLogin() {
   }));
 
   // 定期重新广播（确保新加入的节点能发现）
-  const broadcastInterval = setInterval(async () => {
+  broadcastInterval = setInterval(async () => {
     await node.publish(USER_REGISTRY_TOPIC, JSON.stringify({
       type: 'user_login',
       username: credentials.username,
       publicKey: userKeys.publicKey,
       sessionId,
       timestamp: Date.now()
-    }));
+    }), 'system', true); // 静默模式，不输出日志
   }, 30000); // 每30秒广播一次
-
-  // 清理函数
-  const cleanup = async () => {
-    clearInterval(broadcastInterval);
-    await node.publish(USER_REGISTRY_TOPIC, JSON.stringify({
-      type: 'user_logout',
-      username: credentials.username,
-      sessionId,
-      timestamp: Date.now()
-    }));
-    await node.stop();
-  };
 
   console.log(`\n✅ 节点已创建！\n`);
   console.log(`💡 命令帮助:`);

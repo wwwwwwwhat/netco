@@ -118,8 +118,9 @@ export class HyperswarmNode {
    * @param {string} topic - 主题名称
    * @param {string} message - 消息内容
    * @param {string} from - 发送者标识
+   * @param {boolean} silent - 是否静默（不输出日志）
    */
-  async publish(topic, message, from = 'anonymous') {
+  async publish(topic, message, from = 'anonymous', silent = false) {
     if (!this.topics.has(topic)) {
       console.log(`⚠️  未加入主题: ${topic}`);
       return;
@@ -146,7 +147,7 @@ export class HyperswarmNode {
     }
 
     // 简化日志：只显示主题和连接数，不显示消息内容
-    if (sentCount > 0) {
+    if (!silent && sentCount > 0) {
       console.log(`📤 发送到 ${topic} (${sentCount} 个连接)`);
     }
   }
