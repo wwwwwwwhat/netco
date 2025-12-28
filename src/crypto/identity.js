@@ -85,9 +85,40 @@ export function restoreKeyPair(publicKeyStr, secretKeyStr) {
   };
 }
 
+/**
+ * 对消息进行签名
+ * @param {string} message - 要签名的消息
+ * @param {Uint8Array} secretKey - 原始私钥
+ * @returns {string} Base64编码的签名
+ */
+export function signMessage(message, secretKey) {
+  const messageBytes = new TextEncoder().encode(message);
+  const signature = nacl.sign.detached(messageBytes, secretKey);
+  return encode(signature);
+}
+
+/**
+ * 验证签名
+ * @param {string} message - 原始消息
+ * @param {string} signatureBase64 - Base64编码的签名
+ * @param {Uint8Array} publicKey - 原始公钥
+ * @returns {boolean} 签名是否有效
+ */
+export function verifySignature(message, signatureBase64, publicKey) {
+  try {
+    const messageBytes = new TextEncoder().encode(message);
+    const signature = decode(signatureBase64);
+    return nacl.sign.detached.verify(messageBytes, signature, publicKey);
+  } catch (e) {
+    return false;
+  }
+}
+
 export default {
   generateKeyPairFromCredentials,
   getUserId,
   verifyCredentials,
   restoreKeyPair,
+  signMessage,
+  verifySignature
 };
