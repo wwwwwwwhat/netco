@@ -18,31 +18,11 @@ const decode = naclUtil.decodeBase64;
  * @returns {Promise<Object>} 包含公钥和私钥的对象
  */
 export async function generateKeyPairFromCredentials(username, password) {
-  // 获取时间戳
-  const timestamp = Date.now().toString();
-
   // 生成用户名摘要
   const usernameDigest = crypto.createHash('sha256').update(username).digest('hex');
 
-  // 生成一个随机向量用于加密
-  const randomIV = crypto.randomBytes(24);
-
-  // 数据元组，用于随机排列
-  const seeds = [
-    password,
-    timestamp,
-    usernameDigest,
-    Buffer.from(randomIV).toString('hex')
-  ];
-
-  // 使用 Fisher-Yates 算法进行随机排列
-  for (let i = seeds.length - 1; i > 0; i--) {
-    const j = Math.floor(Math.random() * (i + 1));
-    [seeds[i], seeds[j]] = [seeds[j], seeds[i]];
-  }
-
-  // 组合输入: 密码 + 时间戳 + 用户名摘要 + 随机向量的随机排列
-  const input = seeds.join('::');
+  // 组合输入: 密码 + 用户名摘要 (移除随机因素以确保确定性)
+  const input = `${password}::${usernameDigest}`;
   
   const passwordBuffer = new TextEncoder().encode(input);
 
