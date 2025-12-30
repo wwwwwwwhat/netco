@@ -1,7 +1,12 @@
+/**
+ * 数据层：用户消息的缓存
+ */
+
 import fs from 'fs';
 import path from 'path';
 import { fileURLToPath } from 'url';
-import crypto from 'crypto';
+import { deriveStorageKey, encryptStorageData, decryptStorageData } from '../crypto/encryption.js';
+import { hashData } from '../crypto/digest.js';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -12,42 +17,50 @@ const CACHE_DIR = path.join(__dirname, '../../data/user/messages');
 // Memory cache: { username: { msgId: msgData } }
 const memoryCache = {};
 
+// Storage keys: { username: Buffer }
+const storageKeys = {};
+
 /**
- * Add a message to the memory cache
- * @param {string} username - The username of the current user
- * @param {Object} messageData - The message data
+ * 使用用户身份初始化储存
+ * @param {string} username - 用户名
+ * @param {string} password - 密码
+ */
+export function initStorage(username, password) {
+  storageKeys[username] = deriveStorageKey(username, password);
+}
+
+/**
+ * 将对话信息加入到缓存中
+ * @param {string} username - 用户名
+ * @param {Object} messageData - 消息数据
  */
 export function cacheMessage(username, messageData) {
   if (!memoryCache[username]) {
     memoryCache[username] = {};
   }
 
-  // Generate ID
+  // ID，唯一标识信息
   const idInput = `${messageData.senderPublicKey || 'unknown'}:${messageData.timestamp}:${messageData.content}`;
-  const id = crypto.createHash('sha256').update(idInput).digest('hex');
+  const id = hashData(idInput);
 
   memoryCache[username][id] = {
-    date: new Date(messageData.timestamp).toISOString(),
-    content: messageData.content,
-    timestamp: messageData.timestamp,
-    senderPublicKey: messageData.senderPublicKey,
-    senderName: messageData.senderName,
-    peerPublicKey: messageData.peerPublicKey, // The other party in DM
-    groupId: messageData.groupId, // Group ID if group chat
-    type: messageData.type // 'direct_message' or 'group_message'
+    date: new Date(messageData.timestamp).toISOString(), // 消息的日期，用于排序
+    content: messageData.content,                        // 消息的具体内容
+    timestamp: messageData.timestamp,                    // 消息的时间戳，用于排序
+    senderPublicKey: messageData.senderPublicKey,        // 自己的公钥
+    senderName: messageData.senderName,                  // 自己的用户名
+    peerPublicKey: messageData.peerPublicKey,            // 对方的公钥，两个公钥确定唯一会话
+    // groupId: messageData.groupId,                        // 群组消息数据（群组消息缓存未实现）
+    type: messageData.type                               // 消息类型
   };
-  
-  // Flush immediately for persistence
-  // flushCache(username);
 }
 
 /**
- * Flush memory cache to disk
- * @param {string} username - The username to flush (optional, if null flush all)
+ * 将缓存储存到磁盘当中
+ * @param {string} username - 特定用户缓存的 flush，不指定默认全部
  */
 export function flushCache(username = null) {
   try {
-    // Ensure directory exists
     if (!fs.existsSync(CACHE_DIR)) {
       fs.mkdirSync(CACHE_DIR, { recursive: true });
     }
@@ -55,7 +68,9 @@ export function flushCache(username = null) {
     const usersToFlush = username ? [username] : Object.keys(memoryCache);
 
     for (const user of usersToFlush) {
-      if (!memoryCache[user] || Object.keys(memoryCache[user]).length === 0) continue;
+      if (!memoryCache[user] || Object.keys(memoryCache[user]).length === 0) {
+        continue;
+      }
 
       const filePath = path.join(CACHE_DIR, `${user}.json`);
       let messages = {};
@@ -65,48 +80,79 @@ export function flushCache(username = null) {
         try {
           messages = JSON.parse(fileContent);
         } catch (e) {
-          console.error(`Error parsing message cache for ${user}:`, e);
+          // console.error(`消息数据 Json 解析失败。 ${user}:`, e);
           messages = {};
         }
       }
 
-      // Merge memory cache into file cache
-      Object.assign(messages, memoryCache[user]);
+      // flush 到磁盘上的内容需要提前加密，防止被攻击
+      const key = storageKeys[user];
+      const newMessages = memoryCache[user];
+
+      for (const [msgId, msgData] of Object.entries(newMessages)) {
+        const msgToSave = { ...msgData };
+        // 加密内存中的所有明文信息
+        if (key && msgToSave.content && !msgToSave.isEncrypted) {
+          msgToSave.content = encryptStorageData(msgToSave.content, key);
+          msgToSave.isEncrypted = true;
+        }
+        messages[msgId] = msgToSave;
+      }
 
       fs.writeFileSync(filePath, JSON.stringify(messages, null, 2), 'utf8');
-      console.log(`💾 [${user}] 缓存已写入磁盘 (${Object.keys(memoryCache[user]).length} 条新消息)`);
+      // console.log(`[${user}] 缓存已写入磁盘 (${Object.keys(memoryCache[user]).length} 条新消息)`);
       
-      // Clear memory cache for this user
+      // 清除当前内存缓存，以节省空间
       memoryCache[user] = {};
     }
   } catch (error) {
-    console.error('Failed to flush cache:', error);
+    // console.error('缓存失败:', error);
   }
 }
 
 /**
- * Load chat history with a specific peer or group
- * @param {string} username - Current username
- * @param {string} targetId - Peer Public Key or Group ID
+ * 加载对话缓存
+ * @param {string} username - 当前用户
+ * @param {string} targetId - 对方的公钥
  * @param {string} type - 'direct' or 'group'
- * @returns {Array} Sorted messages
+ * @returns {Array} 按时间排序的信息
  */
 export function loadHistory(username, targetId, type) {
   try {
     const filePath = path.join(CACHE_DIR, `${username}.json`);
-    if (!fs.existsSync(filePath)) {
-      return [];
+    let messages = {};
+    if (fs.existsSync(filePath)) {
+      const fileContent = fs.readFileSync(filePath, 'utf8');
+      try {
+        messages = JSON.parse(fileContent);
+      } catch (e) {
+        messages = {};
+      }
     }
 
-    const fileContent = fs.readFileSync(filePath, 'utf8');
-    const messages = JSON.parse(fileContent);
     const history = [];
+    const key = storageKeys[username];
 
-    // Also check memory cache for latest messages not yet flushed
+    // 检查是否存在没有被缓存的信息
     const memMessages = memoryCache[username] || {};
     const allMessages = { ...messages, ...memMessages };
 
     for (const msg of Object.values(allMessages)) {
+      // Decrypt if needed
+      let content = msg.content;
+      if (msg.isEncrypted && key) {
+          const decrypted = decryptStorageData(msg.content, key);
+          if (decrypted) {
+              content = decrypted;
+          } else {
+              content = '[无法解密的消息]';
+          }
+      } else if (msg.isEncrypted && !key) {
+          content = '[未解锁的消息]';
+      }
+
+      const decodedMsg = { ...msg, content };
+
       if (type === 'direct') {
         // For DM, we want messages where:
         // 1. peerPublicKey == targetId (messages I sent to them, or they sent to me in a context where I recorded them as peer)
@@ -118,27 +164,22 @@ export function loadHistory(username, targetId, type) {
         // Note: When I send a message, I should record peerPublicKey = receiver.
         // When I receive a message, senderPublicKey is the sender.
         
-        if (msg.type === 'direct_message') {
-           if (msg.peerPublicKey === targetId || msg.senderPublicKey === targetId) {
-             history.push(msg);
+        if (decodedMsg.type === 'direct_message') {
+           if (decodedMsg.peerPublicKey === targetId || decodedMsg.senderPublicKey === targetId) {
+             history.push(decodedMsg);
            }
         }
       } else if (type === 'group') {
-        if (msg.type === 'group_message' && msg.groupId === targetId) {
-          history.push(msg);
+        if (decodedMsg.type === 'group_message' && decodedMsg.groupId === targetId) {
+          history.push(decodedMsg);
         }
       }
     }
 
-    // Sort by timestamp
+    // 使用时间戳排序
     return history.sort((a, b) => new Date(a.date) - new Date(b.date));
   } catch (error) {
     console.error('Error loading history:', error);
     return [];
   }
-}
-
-// Deprecated: saveMessage (kept for backward compatibility if needed, but redirected)
-export function saveMessage(username, messageData) {
-  cacheMessage(username, messageData);
 }

@@ -1,23 +1,16 @@
 /**
- * 安全层 - 消息加密和解密
- * 使用 NaCl Box (Curve25519 + XSalsa20 + Poly1305) 进行端到端加密
+ * encryption.js
+ * 安全层：消息加密实现
  */
 
 import nacl from 'tweetnacl';
 import naclUtil from 'tweetnacl-util';
 import crypto from 'crypto';
 import ed2curve from 'ed2curve';
+import { hashData } from './digest.js';
 
 const b64_encode = naclUtil.encodeBase64;
 const b64_decode = naclUtil.decodeBase64;
-
-/**
- * 将签名密钥转换为加密密钥
- * Ed25519 -> Curve25519
- */
-function convertSignKeyToEncryptKey(signKey) {
-  return nacl.sign.keyPair.fromSecretKey(signKey);
-}
 
 /**
  * 加密消息
@@ -38,7 +31,7 @@ export function encryptMessage(message, recipientPublicKey, senderSecretKey) {
   const recipientEncryptPublic = ed2curve.convertPublicKey(recipientPublicKey);
 
   if (!senderEncryptSecret || !recipientEncryptPublic) {
-      throw new Error('密钥转换失败: 无效的 Ed25519 密钥');
+    throw new Error('密钥转换失败: 无效的 Ed25519 密钥');
   }
 
   // 使用 Box 加密
@@ -78,8 +71,7 @@ export function decryptMessage(encryptedMessageBase64, senderPublicKey, recipien
     const senderEncryptPublic = ed2curve.convertPublicKey(senderPublicKey);
 
     if (!recipientEncryptSecret || !senderEncryptPublic) {
-        console.error('密钥转换失败');
-        return null;
+      return null;
     }
 
     const decryptedBytes = nacl.box.open(
@@ -89,16 +81,16 @@ export function decryptMessage(encryptedMessageBase64, senderPublicKey, recipien
       recipientEncryptSecret
     );
 
-    if (!decryptedBytes) return null;
+    if (!decryptedBytes) { 
+      return null;
+    }
 
     return new TextDecoder().decode(decryptedBytes);
   } catch (error) {
-    console.error('解密失败:', error);
+    // console.error('解密失败:', error);
     return null;
   }
 }
-
-
 
 /**
  * 生成消息标签 (Tag)
@@ -120,8 +112,7 @@ export function generateTag(publicKey) {
  * @returns {boolean} 标签是否匹配
  */
 export function verifyTag(tag, publicKey) {
-  const expectedTag = generateTag(publicKey);
-  return tag === expectedTag;
+  return tag === generateTag(publicKey);
 }
 
 /**
@@ -136,6 +127,7 @@ export function symmetricEncrypt(message, sharedKey) {
 
   const encrypted = nacl.secretbox(messageBytes, nonce, sharedKey);
 
+  // send-message = nonce + cipher
   const fullMessage = new Uint8Array(nonce.length + encrypted.length);
   fullMessage.set(nonce);
   fullMessage.set(encrypted, nonce.length);
@@ -163,7 +155,64 @@ export function symmetricDecrypt(encryptedMessage, sharedKey) {
 
     return new TextDecoder().decode(decrypted);
   } catch (error) {
-    console.error('对称解密失败:', error.message);
+    // console.error('对称解密失败:', error.message);
+    return null;
+  }
+}
+
+/**
+ * 从用户名和密码派生存储密钥 (AES-256)
+ * @param {string} username
+ * @param {string} password
+ * @returns {Buffer} 32字节密钥
+ */
+export function deriveStorageKey(username, password) {
+  const salt = hashData(username);
+  // 使用 pbkdf2 同步版本
+  return crypto.pbkdf2Sync(password, salt, 100000, 32, 'sha512');
+}
+
+/**
+ * 使用 AES-256-GCM 加密数据 (用于本地存储)
+ * @param {string} text
+ * @param {Buffer} key
+ * @returns {string} base64 encoded (iv:authTag:encrypted)
+ */
+export function encryptStorageData(text, key) {
+  const iv = crypto.randomBytes(12); // GCM standard IV size
+  const cipher = crypto.createCipheriv('aes-256-gcm', key, iv);
+  
+  let encrypted = cipher.update(text, 'utf8', 'base64');
+  encrypted += cipher.final('base64');
+  const authTag = cipher.getAuthTag();
+
+  // Format: iv:authTag:encrypted
+  return `${iv.toString('base64')}:${authTag.toString('base64')}:${encrypted}`;
+}
+
+/**
+ * 使用 AES-256-GCM 解密数据 (用于本地存储)
+ * @param {string} encryptedData
+ * @param {Buffer} key
+ * @returns {string|null} decrypted text
+ */
+export function decryptStorageData(encryptedData, key) {
+  try {
+    const parts = encryptedData.split(':');
+    if (parts.length !== 3) return null;
+    
+    const iv = Buffer.from(parts[0], 'base64');
+    const authTag = Buffer.from(parts[1], 'base64');
+    const encrypted = parts[2];
+
+    const decipher = crypto.createDecipheriv('aes-256-gcm', key, iv);
+    decipher.setAuthTag(authTag);
+    
+    let decrypted = decipher.update(encrypted, 'base64', 'utf8');
+    decrypted += decipher.final('utf8');
+    return decrypted;
+  } catch (e) {
+    // console.error('Storage decryption failed:', e.message);
     return null;
   }
 }
@@ -174,5 +223,8 @@ export default {
   generateTag,
   verifyTag,
   symmetricEncrypt,
-  symmetricDecrypt
+  symmetricDecrypt,
+  deriveStorageKey,
+  encryptStorageData,
+  decryptStorageData
 };

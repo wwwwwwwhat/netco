@@ -9,6 +9,7 @@ import { symmetricEncrypt, symmetricDecrypt } from '../crypto/encryption.js';
 import { createInviteCode, formatInviteCode, parseInviteCode, unformatInviteCode } from '../utils/inviteCode.js';
 import { promptLogin, showLoginSuccess, promptSelection, promptRegister } from '../utils/login.js';
 import { checkRegistrationLimits, recordRegistration, initRegistry, saveRegistryToDisk } from '../data/host_registry.js';
+import { initStorage } from '../data/msg_storage.js';
 import { performPoW } from '../utils/pow.js';
 import { ReplayProtection } from '../utils/replay_protection.js';
 import crypto from 'crypto';
@@ -132,6 +133,9 @@ async function attemptLogin() {
   // 生成身份密钥（不显示登录成功，等确认无冲突后再显示）
   console.log('🔐 正在生成身份密钥...');
   const userKeys = await generateKeyPairFromCredentials(credentials.username, credentials.password);
+
+  // 初始化本地存储加密
+  initStorage(credentials.username, credentials.password);
 
   // 保存用户数据
   saveLocalUser({

@@ -1,12 +1,13 @@
 /**
- * 身份层 - 基于用户名密码生成密钥对
+ * identity.js
+ * 安全层 - 基于用户名密码生成密钥对
  * 使用 Scrypt 算法确保密钥派生的安全性
  */
 
 import scrypt from 'scrypt-js';
 import nacl from 'tweetnacl';
 import naclUtil from 'tweetnacl-util';
-import crypto from 'crypto';
+import { hashData } from './digest.js';
 
 const encode = naclUtil.encodeBase64;
 const decode = naclUtil.decodeBase64;
@@ -18,15 +19,13 @@ const decode = naclUtil.decodeBase64;
  * @returns {Promise<Object>} 包含公钥和私钥的对象
  */
 export async function generateKeyPairFromCredentials(username, password) {
-  // 生成用户名摘要
-  const usernameDigest = crypto.createHash('sha256').update(username).digest('hex');
-
-  // 组合输入: 密码 + 用户名摘要 (移除随机因素以确保确定性)
-  const input = `${password}::${usernameDigest}`;
+  // 组合输入: 密码 + 用户名 (移除随机因素以确保确定性)
+  const input = `${password}::${username}`;
   
-  const passwordBuffer = new TextEncoder().encode(input);
+  const buffer = new TextEncoder().encode(input);
 
   // 使用用户名随机数作为盐值
+  const usernameDigest = hashData(username);
   const salt = new TextEncoder().encode(usernameDigest);
 
   // Scrypt 参数: N=16384, r=8, p=1 (中等强度,适合实时应用)
@@ -36,7 +35,7 @@ export async function generateKeyPairFromCredentials(username, password) {
   const dkLen = 32; // 32字节 = 256位,符合NaCl要求
 
   // 使用 Scrypt 派生密钥
-  const derivedKey = await scrypt.scrypt(passwordBuffer, salt, N, r, p, dkLen);
+  const derivedKey = await scrypt.scrypt(buffer, salt, N, r, p, dkLen);
 
   // 使用派生的密钥作为种子生成 Ed25519 密钥对
   const keyPair = nacl.sign.keyPair.fromSeed(new Uint8Array(derivedKey));
