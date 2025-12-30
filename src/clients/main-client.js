@@ -5,13 +5,13 @@
 import '../polyfill.js';
 import HyperswarmNode from '../network/hyperswarmNode.js';
 import { generateKeyPairFromCredentials, signMessage, verifySignature } from '../crypto/identity.js';
-import { symmetricEncrypt, symmetricDecrypt } from '../crypto/encryption.js';
-import { createInviteCode, formatInviteCode, parseInviteCode, unformatInviteCode } from '../utils/inviteCode.js';
-import { promptLogin, showLoginSuccess, promptSelection, promptRegister } from '../utils/login.js';
+import { symmetricEncrypt, symmetricDecrypt, encryptMessage, decryptMessage } from '../crypto/encryption.js';
+import { createInviteCode, formatInviteCode, parseInviteCode, unformatInviteCode } from '../utils/communication/inviteCode.js';
+import { promptLogin, showLoginSuccess, promptSelection, promptRegister } from '../utils/communication/login.js';
 import { checkRegistrationLimits, recordRegistration, initRegistry, saveRegistryToDisk } from '../data/host_registry.js';
-import { initStorage } from '../data/msg_storage.js';
-import { performPoW } from '../utils/pow.js';
-import { ReplayProtection } from '../utils/replay_protection.js';
+import { initStorage, cacheMessage, flushCache, loadHistory } from '../data/msg_storage.js';
+import { performPoW } from '../utils/security/pow.js';
+import { ReplayProtection } from '../utils/security/replay_protection.js';
 import crypto from 'crypto';
 import * as readline from 'readline';
 import fs from 'fs';
@@ -172,14 +172,21 @@ async function attemptLogin() {
 
   // 定期广播定时器（稍后初始化）
   let broadcastInterval = null;
+  // 定期刷新缓存定时器
+  let flushInterval = null;
 
   // 清理函数（需要在使用前定义）
   const cleanup = async () => {
     // 保存注册表数据
     saveRegistryToDisk();
+    // 保存消息缓存
+    flushCache(credentials.username);
 
     if (broadcastInterval) {
       clearInterval(broadcastInterval);
+    }
+    if (flushInterval) {
+      clearInterval(flushInterval);
     }
     try {
       await node.publish(USER_REGISTRY_TOPIC, JSON.stringify({
@@ -293,6 +300,11 @@ async function attemptLogin() {
         }), 'system', true);
       }
 
+      if (data.type === 'dm_signal' && data.target === credentials.username) {
+        console.log(`\n📩 收到来自 ${data.sender} 的私聊请求`);
+        console.log(`   输入 /dm ${data.sender} 即可开始聊天`);
+      }
+
       if (data.type === 'login_alert' && data.username === credentials.username) {
         console.log(`\n🚨 安全警告: ${data.message}`);
       }
@@ -363,10 +375,16 @@ async function attemptLogin() {
     }), 'system', true); // 静默模式，不输出日志
   }, 30000); // 每30秒广播一次
 
+  // 定期刷新缓存 (每5分钟)
+  flushInterval = setInterval(() => {
+    flushCache(credentials.username);
+  }, 5 * 60 * 1000);
+
   console.log(`\n✅ 节点已创建！\n`);
   console.log(`💡 命令帮助:`);
   console.log(`   /create <群组名>  - 创建新群组并生成邀请码`);
   console.log(`   /join <邀请码>    - 使用邀请码加入群组`);
+  console.log(`   /dm <用户名>      - 发起私聊 (端到端加密)`);
   console.log(`   /invite           - 显示当前群组的邀请码`);
   console.log(`   /users            - 查看在线用户`);
   console.log(`   /stats            - 查看统计信息`);
@@ -391,9 +409,34 @@ async function attemptLogin() {
       try {
         const data = JSON.parse(msg.data);
         
-        // 防重放检查
-        if (currentGroup && currentGroup.replayProtection.isReplay(data.sender, data.content, data.timestamp)) {
-          return; // 默默丢弃重放消息
+        // 防重放检查 (仅对群组有效，DM暂不检查或需要单独实例)
+        if (currentGroup && currentGroup.replayProtection && currentGroup.replayProtection.isReplay(data.sender, data.content, data.timestamp)) {
+          return; 
+        }
+
+        // 处理私聊消息
+        if (currentGroup && currentGroup.type === 'dm') {
+             if (data.sender === credentials.username) return;
+             
+             const decrypted = decryptMessage(data.content, currentGroup.peerPublicKey, userKeys.secretKeyRaw);
+             if (decrypted) {
+                 const timestamp = new Date(data.timestamp).toLocaleTimeString();
+                 console.log(`\n💬 [${timestamp}] ${data.sender} (私密): ${decrypted}`);
+                 
+                 // 缓存接收到的消息
+                 cacheMessage(credentials.username, {
+                    type: 'direct_message',
+                    content: decrypted,
+                    timestamp: data.timestamp,
+                    senderPublicKey: naclUtil.encodeBase64(currentGroup.peerPublicKey), // 对方发来的，sender是对方
+                    senderName: data.sender,
+                    peerPublicKey: naclUtil.encodeBase64(currentGroup.peerPublicKey),   // 对话对象是对方
+                    isEncrypted: false
+                 });
+
+                 rl.prompt();
+             }
+             return;
         }
 
         // 处理密钥轮换
@@ -468,6 +511,7 @@ async function attemptLogin() {
       const replayProtection = new ReplayProtection();
 
       currentGroup = {
+        type: 'group',
         id: invite.groupId,
         name: invite.groupName,
         key: invite.sharedKey,
@@ -523,6 +567,7 @@ async function attemptLogin() {
             const replayProtection = new ReplayProtection();
 
             currentGroup = {
+              type: 'group',
               id: groupId,
               name: groupName,
               key: sharedKey,
@@ -557,9 +602,65 @@ async function attemptLogin() {
           }
           break;
 
+        case '/dm':
+          {
+            const targetUser = args[0];
+            if (!targetUser) {
+               console.log('⚠️  请指定用户名: /dm <username>');
+               break;
+            }
+            if (targetUser === credentials.username) {
+               console.log('⚠️  不能和自己聊天');
+               break;
+            }
+            
+            const peer = onlineUsers.get(targetUser);
+            if (!peer) {
+               console.log(`⚠️  用户 ${targetUser} 不在线`);
+               break;
+            }
+
+            const sortedUsers = [credentials.username, targetUser].sort();
+            const dmTopic = `dm-${sortedUsers.join('-')}`;
+            
+            // 发送信号
+            await node.publish(USER_REGISTRY_TOPIC, JSON.stringify({
+                type: 'dm_signal',
+                target: targetUser,
+                sender: credentials.username
+            }));
+
+            currentGroup = {
+                type: 'dm',
+                id: dmTopic,
+                name: `与 ${targetUser} 的私聊`,
+                topic: dmTopic,
+                peerUsername: targetUser,
+                peerPublicKey: naclUtil.decodeBase64(peer.publicKey)
+            };
+
+            console.log(`\n💬 正在进入与 ${targetUser} 的私聊频道...`);
+            
+            // 加载历史记录
+            const history = loadHistory(credentials.username, naclUtil.encodeBase64(currentGroup.peerPublicKey), 'direct');
+            if (history.length > 0) {
+                console.log(`\n📜 --- 历史记录 ---`);
+                for (const msg of history) {
+                    const time = new Date(msg.timestamp).toLocaleString();
+                    const sender = msg.senderName === credentials.username ? '我' : msg.senderName;
+                    console.log(`[${time}] ${sender}: ${msg.content}`);
+                }
+                console.log(`📜 ------------------\n`);
+            }
+
+            await node.joinTopic(dmTopic, createMessageHandler());
+            console.log(`✅ 已加入私聊频道`);
+          }
+          break;
+
         case '/rotate':
-          if (!currentGroup) {
-            console.log(`\n⚠️  请先创建或加入一个群组`);
+          if (!currentGroup || currentGroup.type !== 'group') {
+            console.log(`\n⚠️  请先创建或加入一个群组 (私聊不支持密钥轮换)`);
           } else {
             console.log(`\n🔄 正在轮换群组密钥...`);
             const newKey = crypto.randomBytes(32);
@@ -655,6 +756,7 @@ async function attemptLogin() {
           console.log(`\n💡 命令帮助:`);
           console.log(`   /create <群组名>  - 创建新群组并生成邀请码`);
           console.log(`   /join <邀请码>    - 使用邀请码加入群组`);
+          console.log(`   /dm <用户名>      - 发起私聊 (端到端加密)`);
           console.log(`   /invite           - 显示当前群组的邀请码`);
           console.log(`   /users            - 查看在线用户`);
           console.log(`   /stats            - 查看统计信息`);
@@ -669,22 +771,50 @@ async function attemptLogin() {
 
     } else if (message) {
       if (!currentGroup) {
-        console.log(`\n⚠️  请先使用 /create 创建或 /join 加入一个群组`);
+        console.log(`\n⚠️  请先使用 /create 创建或 /join 加入一个群组，或使用 /dm 发起私聊`);
       } else {
-        const encrypted = symmetricEncrypt(message, currentGroup.key);
-        const signature = signMessage(encrypted, userKeys.secretKeyRaw);
-        
-        await node.publish(
-          currentGroup.topic,
-          JSON.stringify({
-            type: 'message',
-            sender: credentials.username,
-            content: encrypted,
-            signature: signature,
-            timestamp: Date.now()
-          })
-        );
-        console.log(`✓ 已发送（加密+签名）`);
+        if (currentGroup.type === 'dm') {
+            const encrypted = encryptMessage(message, currentGroup.peerPublicKey, userKeys.secretKeyRaw);
+            // 统一格式，额外加入签名
+            const signature = signMessage(encrypted, userKeys.secretKeyRaw);
+
+            const timestamp = Date.now();
+            await node.publish(currentGroup.topic, JSON.stringify({
+                type: 'dm_message',
+                sender: credentials.username,
+                content: encrypted,
+                signature: signature,
+                timestamp: timestamp
+            }));
+             console.log(`✓ 已发送（端到端加密）`);
+
+             // 缓存发送的消息
+             cacheMessage(credentials.username, {
+                type: 'direct_message',
+                content: message,
+                timestamp: timestamp,
+                senderPublicKey: userKeys.publicKey, // 我发的，sender是我
+                senderName: credentials.username,
+                peerPublicKey: naclUtil.encodeBase64(currentGroup.peerPublicKey), // 对话对象是对方
+                isEncrypted: false
+             });
+
+        } else {
+            const encrypted = symmetricEncrypt(message, currentGroup.key);
+            const signature = signMessage(encrypted, userKeys.secretKeyRaw);
+            
+            await node.publish(
+              currentGroup.topic,
+              JSON.stringify({
+                type: 'message',
+                sender: credentials.username,
+                content: encrypted,
+                signature: signature,
+                timestamp: Date.now()
+              })
+            );
+            console.log(`✓ 已发送（加密+签名）`);
+        }
       }
     }
 

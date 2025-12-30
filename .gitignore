@@ -27,4 +27,4 @@ tmp/
 temp/
 node_modules/
 .claude/
-data/
+/data/
