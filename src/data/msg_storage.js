@@ -66,12 +66,10 @@ export function flushCache(username = null) {
     }
 
     const usersToFlush = username ? [username] : Object.keys(memoryCache);
+    const DAYS_MS = 3 * 24 * 60 * 60 * 1000;
+    const now = Date.now();
 
     for (const user of usersToFlush) {
-      if (!memoryCache[user] || Object.keys(memoryCache[user]).length === 0) {
-        continue;
-      }
-
       const filePath = path.join(CACHE_DIR, `${user}.json`);
       let messages = {};
 
@@ -87,7 +85,7 @@ export function flushCache(username = null) {
 
       // flush 到磁盘上的内容需要提前加密，防止被攻击
       const key = storageKeys[user];
-      const newMessages = memoryCache[user];
+      const newMessages = memoryCache[user] || {};
 
       for (const [msgId, msgData] of Object.entries(newMessages)) {
         const msgToSave = { ...msgData };
@@ -99,11 +97,20 @@ export function flushCache(username = null) {
         messages[msgId] = msgToSave;
       }
 
+      // 清理超过3天的消息
+      for (const [msgId, msgData] of Object.entries(messages)) {
+        const msgTime = new Date(msgData.timestamp).getTime();
+        if (now - msgTime > DAYS_MS) {
+          delete messages[msgId];
+        }
+      }
+
       fs.writeFileSync(filePath, JSON.stringify(messages, null, 2), 'utf8');
-      // console.log(`[${user}] 缓存已写入磁盘 (${Object.keys(memoryCache[user]).length} 条新消息)`);
       
-      // 清除当前内存缓存，以节省空间
-      memoryCache[user] = {};
+      // Clear memory cache for this user
+      if (memoryCache[user]) {
+        memoryCache[user] = {};
+      }
     }
   } catch (error) {
     // console.error('缓存失败:', error);
