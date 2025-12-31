@@ -286,6 +286,14 @@ async function attemptLogin() {
           if (isNewUser) {
             console.log(`\n👤 发现在线用户: ${username}`);
           }
+
+          // 如果已在群组中，自动将该用户加入 currentGroup.members
+          if (currentGroup && currentGroup.type === 'group') {
+            currentGroup.members = currentGroup.members || [];
+            if (!currentGroup.members.includes(username)) {
+              currentGroup.members.push(username);
+            }
+          }
         }
       }
 
@@ -315,6 +323,35 @@ async function attemptLogin() {
         if (user && user.sessionId === remoteSessionId) {
           onlineUsers.delete(username);
           console.log(`\n👋 用户下线: ${username}`);
+
+          // 如果该用户属于当前群组成员，移除并发布轮换选举消息
+          if (currentGroup && currentGroup.type === 'group' && currentGroup.members && currentGroup.members.includes(username)) {
+            // 从成员列表移除
+            currentGroup.members = currentGroup.members.filter(m => m !== username);
+
+            console.log(`\n🔐 群组成员 ${username} 离开，发布轮换选举...`);
+
+            // 发布 rotate_election 到群组主题，签名 payload
+            try {
+              const payloadObj = {
+                leavingUser: username,
+                lastActiveSender: currentGroup.lastActiveSender || null,
+                timestamp: Date.now()
+              };
+              const payload = JSON.stringify(payloadObj);
+              const signature = signMessage(payload, userKeys.secretKeyRaw);
+
+              await node.publish(currentGroup.topic, JSON.stringify({
+                type: 'rotate_election',
+                sender: credentials.username,
+                content: payload,
+                signature,
+                timestamp: Date.now()
+              }));
+            } catch (e) {
+              console.error('发布轮换选举失败:', e);
+            }
+          }
         }
       }
     } catch (error) {
@@ -404,12 +441,63 @@ async function attemptLogin() {
   });
 
   // 消息处理函数
+  // 自动/按成员分发的密钥轮换函数
+  async function performGroupKeyRotation(initiatorUsername) {
+    if (!currentGroup || currentGroup.type !== 'group') return;
+
+    const newKey = crypto.randomBytes(32);
+    const newKeyBase64 = naclUtil.encodeBase64(newKey);
+
+    // 只向当前在线且属于群组的成员分发（包括自己）
+    const members = (currentGroup.members || []).filter(m => m === credentials.username || onlineUsers.has(m));
+
+    const boxes = [];
+    for (const member of members) {
+      try {
+        let recipientPubBase64;
+        if (member === credentials.username) {
+          recipientPubBase64 = userKeys.publicKey;
+        } else {
+          const u = onlineUsers.get(member);
+          if (!u) continue;
+          recipientPubBase64 = u.publicKey;
+        }
+        const recipientPubRaw = naclUtil.decodeBase64(recipientPubBase64);
+        // 使用发起者的私钥对每个接收方加密 newKeyBase64
+        const box = encryptMessage(newKeyBase64, recipientPubRaw, userKeys.secretKeyRaw);
+        boxes.push({ recipient: member, box });
+      } catch (e) {
+        // 忽略单个成员的失败
+      }
+    }
+
+    if (boxes.length === 0) {
+      throw new Error('没有可分发的新密钥接收者');
+    }
+
+    const payload = JSON.stringify({ mode: 'per-recipient', boxes });
+    const signature = signMessage(payload, userKeys.secretKeyRaw);
+
+    await node.publish(currentGroup.topic, JSON.stringify({
+      type: 'key_rotation',
+      sender: initiatorUsername,
+      content: payload,
+      signature,
+      timestamp: Date.now()
+    }));
+
+    // 本地更新为新密钥并记录轮换时间
+    currentGroup.key = newKey;
+    currentGroup.lastRotationAt = Date.now();
+    console.log(`\n🔄 已分发并更新本地群组密钥（发起者: ${initiatorUsername}）`);
+  }
+
   const createMessageHandler = () => {
-    return (msg) => {
+    return async (msg) => {
       try {
         const data = JSON.parse(msg.data);
         
-        // 防重放检查 (仅对群组有效，DM暂不检查或需要单独实例)
+        // 防重放检查 (群组和私聊均有效)
         if (currentGroup && currentGroup.replayProtection && currentGroup.replayProtection.isReplay(data.sender, data.content, data.timestamp)) {
           return; 
         }
@@ -443,36 +531,121 @@ async function attemptLogin() {
         if (data.type === 'key_rotation') {
            const senderUser = onlineUsers.get(data.sender);
            if (!senderUser) {
-               console.log(`\n⚠️  收到密钥轮换请求，但发送者 "${data.sender}" 未知 (无法验证签名)`);
+              //  console.log(`\n⚠️  收到密钥轮换请求，但发送者 "${data.sender}" 未知 (无法验证签名)`);
                return;
            }
            const senderKeyRaw = naclUtil.decodeBase64(senderUser.publicKey);
            if (!verifySignature(data.content, data.signature, senderKeyRaw)) {
-               console.log(`\n⚠️  收到密钥轮换请求，但签名无效！可能存在篡改。`);
+              //  console.log(`\n⚠️  收到密钥轮换请求，但签名无效！可能存在篡改。`);
                return;
            }
 
+           // 支持两种轮换格式：
+           // 1) 广播对称加密的 newKeyBase64（向后兼容）
+           // 2) per-recipient 格式：{ mode: 'per-recipient', boxes: [{recipient, box}, ...] }
+           let parsed = null;
+           try {
+             parsed = JSON.parse(data.content);
+           } catch (e) {
+             parsed = null;
+           }
+
+           if (parsed && parsed.boxes && Array.isArray(parsed.boxes)) {
+             // 查找是否有给自己的封装
+             const myEntry = parsed.boxes.find(b => b.recipient === credentials.username);
+             if (!myEntry) {
+               // 如果没有，说明轮换并未发给我（可能为离群者）
+              //  console.log(`\n🔕 收到密钥轮换，但未包含本设备的密钥份`);
+               return;
+             }
+             const box = myEntry.box;
+             // 使用发起者的公钥和本设备私钥解密
+             const newKeyBase64 = decryptMessage(box, senderKeyRaw, userKeys.secretKeyRaw);
+             if (newKeyBase64) {
+               const newKey = naclUtil.decodeBase64(newKeyBase64);
+               currentGroup.key = newKey;
+              //  console.log(`\n🔄 群组密钥已由 ${data.sender} 更新（按成员封装）`);
+             } else {
+              //  console.log(`\n⚠️ 无法解密分发给本设备的新密钥`);
+             }
+             return;
+           }
+
+           // 向后兼容：尝试对称解密（原有广播方式）
            const newKeyBase64 = symmetricDecrypt(data.content, currentGroup.key);
            if (newKeyBase64) {
                const newKey = naclUtil.decodeBase64(newKeyBase64);
                currentGroup.key = newKey;
-               console.log(`\n🔄 群组密钥已由 ${data.sender} 更新。`);
+              //  console.log(`\n🔄 群组密钥已由 ${data.sender} 更新（广播解密）`);
+           }
+           return;
+        }
+        // 处理轮换选举（rotate_election）
+        // 竞争机制，决定谁有轮换密钥的权力
+        if (data.type === 'rotate_election') {
+           const senderUser = onlineUsers.get(data.sender);
+           if (!senderUser) {
+            //  console.log(`\n⚠️  收到轮换选举，但发送者 ${data.sender} 未知，忽略`);
+             return;
+           }
+
+           const senderKeyRaw = naclUtil.decodeBase64(senderUser.publicKey);
+           // 验证签名
+           if (!verifySignature(data.content, data.signature, senderKeyRaw)) {
+            //  console.log(`\n⚠️  收到轮换选举，但签名无效，忽略`);
+             return;
+           }
+
+           let payload = null;
+           try {
+             payload = JSON.parse(data.content);
+           } catch (e) {
+            //  console.log(`\n⚠️  轮换选举内容解析失败`);
+             return;
+           }
+
+           // 决定谁来发起轮换：优先创建者（creator），若创建者在线则由创建者发起；否则由最近活跃发送者发起
+           const creator = currentGroup && currentGroup.creator ? currentGroup.creator : null;
+           const preferred = (creator && onlineUsers.has(creator)) ? creator : (payload.lastActiveSender || (currentGroup && currentGroup.lastActiveSender));
+
+           if (!preferred) {
+             // 无合适发起者，忽略
+             return;
+           }
+
+           if (preferred === credentials.username) {
+             // 避免重复轮换：如果上次轮换在短时间内发生，忽略
+             const now = Date.now();
+             currentGroup.lastRotationAt = currentGroup.lastRotationAt || 0;
+             if (now - currentGroup.lastRotationAt < 5000) {
+               // 如果 5 秒内已经轮换过，忽略重复
+               return;
+             }
+
+            //  console.log(`\n🗳️ 本设备被选为轮换发起者（来源: ${data.sender}），开始执行轮换`);
+             try {
+               await performGroupKeyRotation(credentials.username);
+               currentGroup.lastRotationAt = Date.now();
+             } catch (e) {
+               console.error('执行轮换失败:', e);
+             }
+           } else {
+             // 不是本设备发起，忽略
            }
            return;
         }
 
         // 验证普通消息签名
-        let sigStatus = '❓';
+        let sigStatus = undefined;
         if (data.signature) {
            const senderUser = onlineUsers.get(data.sender);
            if (senderUser) {
-               const senderKeyRaw = naclUtil.decodeBase64(senderUser.publicKey);
-               if (verifySignature(data.content, data.signature, senderKeyRaw)) {
-                   sigStatus = '✅';
-               } else {
-                   sigStatus = '❌';
-                   console.log(`\n⚠️  收到消息 [${data.sender}]，但签名无效！`);
-               }
+             const senderKeyRaw = naclUtil.decodeBase64(senderUser.publicKey);
+             const isValid = verifySignature(data.content, data.signature, senderKeyRaw);
+             sigStatus = Boolean(isValid);
+             if (!isValid) {
+               console.log(`\n⚠️  收到消息 [${data.sender}]，但签名无效！`);
+             }
            }
         }
 
@@ -481,6 +654,10 @@ async function attemptLogin() {
         if (decrypted && data.sender !== credentials.username) {
           const timestamp = new Date(data.timestamp).toLocaleTimeString();
           console.log(`\n💬 [${timestamp}] ${data.sender} ${sigStatus}: ${decrypted}`);
+          // 更新最近活跃发送者
+          if (currentGroup && currentGroup.type === 'group') {
+            currentGroup.lastActiveSender = data.sender;
+          }
           rl.prompt();
         }
       } catch (error) {
@@ -519,6 +696,13 @@ async function attemptLogin() {
         inviteCode: cleanCode,
         replayProtection: replayProtection
       };
+
+      // 初始化成员列表（包括自己和当前已知在线用户）
+      currentGroup.members = [credentials.username, ...Array.from(onlineUsers.keys())].filter((v, i, a) => a.indexOf(v) === i);
+      // 标记创建者
+      currentGroup.creator = invite.creator;
+      currentGroup.lastRotationAt = 0;
+      currentGroup.lastActiveSender = invite.creator || credentials.username;
 
       console.log(`\n📻 正在加入群组...`);
 
@@ -576,6 +760,13 @@ async function attemptLogin() {
               replayProtection: replayProtection
             };
 
+            // 初始化成员列表（包括自己和当前已知在线用户）
+            currentGroup.members = [credentials.username, ...Array.from(onlineUsers.keys())].filter((v, i, a) => a.indexOf(v) === i);
+            // 标记创建者
+            currentGroup.creator = credentials.username;
+            currentGroup.lastRotationAt = 0;
+            currentGroup.lastActiveSender = credentials.username;
+
             console.log(`\n✅ 群组已创建: "${groupName}"`);
             console.log(`📋 群组ID: ${groupId}`);
             console.log(`\n🎟️  邀请码（分享给朋友）:`);
@@ -630,13 +821,17 @@ async function attemptLogin() {
                 sender: credentials.username
             }));
 
+            // 初始化防重放保护
+            const replayProtection = new ReplayProtection();
+
             currentGroup = {
                 type: 'dm',
                 id: dmTopic,
                 name: `与 ${targetUser} 的私聊`,
                 topic: dmTopic,
                 peerUsername: targetUser,
-                peerPublicKey: naclUtil.decodeBase64(peer.publicKey)
+                peerPublicKey: naclUtil.decodeBase64(peer.publicKey),
+                replayProtection: replayProtection
             };
 
             console.log(`\n💬 正在进入与 ${targetUser} 的私聊频道...`);
@@ -662,30 +857,12 @@ async function attemptLogin() {
           if (!currentGroup || currentGroup.type !== 'group') {
             console.log(`\n⚠️  请先创建或加入一个群组 (私聊不支持密钥轮换)`);
           } else {
-            console.log(`\n🔄 正在轮换群组密钥...`);
-            const newKey = crypto.randomBytes(32);
-            const newKeyBase64 = naclUtil.encodeBase64(newKey);
-            
-            // 使用旧密钥加密新密钥 (Key Rolling)
-            const encryptedNewKey = symmetricEncrypt(newKeyBase64, currentGroup.key);
-            
-            // 签名
-            const signature = signMessage(encryptedNewKey, userKeys.secretKeyRaw);
-
-            await node.publish(
-              currentGroup.topic,
-              JSON.stringify({
-                type: 'key_rotation',
-                sender: credentials.username,
-                content: encryptedNewKey,
-                signature: signature,
-                timestamp: Date.now()
-              })
-            );
-
-            // 更新本地密钥
-            currentGroup.key = newKey;
-            console.log(`✅ 密钥已轮换。新密钥已分发给在线成员。`);
+            console.log(`\n🔄 正在轮换群组密钥并向在线成员分发...`);
+            try {
+              await performGroupKeyRotation(credentials.username);
+            } catch (e) {
+              console.error('轮换失败:', e);
+            }
           }
           break;
 
@@ -813,6 +990,8 @@ async function attemptLogin() {
                 timestamp: Date.now()
               })
             );
+            // 标记为最近活跃发送者
+            currentGroup.lastActiveSender = credentials.username;
             console.log(`✓ 已发送（加密+签名）`);
         }
       }

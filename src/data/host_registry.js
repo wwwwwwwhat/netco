@@ -60,7 +60,7 @@ export function initRegistry() {
     lastRegistrationTime: fileData.lastRegistrationTime
   };
   
-  console.log(`[System] 注册表已初始化 (用户数: ${cachedRegistry.userCount})`);
+  // console.log(`注册表已初始化 (用户数: ${cachedRegistry.userCount})`);
 }
 
 /**
@@ -73,9 +73,9 @@ export function saveRegistryToDisk() {
   try {
     ensureDir();
     fs.writeFileSync(REGISTRY_FILE, JSON.stringify(cachedRegistry, null, 2));
-    console.log('[System] 注册表已保存到磁盘');
+    // console.log('注册表已保存到磁盘');
   } catch (error) {
-    console.error('[System] 保存注册表失败:', error);
+    // console.error('保存注册表失败:', error);
   }
 }
 
@@ -119,5 +119,5 @@ export function recordRegistration(username) {
   cachedRegistry.userCount++;
   cachedRegistry.lastRegistrationTime = Date.now();
   
-  console.log(`[System] 注册计数已更新 (当前: ${cachedRegistry.userCount})，将在退出时保存`);
+  // console.log(`[System] 注册计数已更新 (当前: ${cachedRegistry.userCount})，将在退出时保存`);
 }

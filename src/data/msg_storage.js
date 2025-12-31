@@ -186,7 +186,7 @@ export function loadHistory(username, targetId, type) {
     // 使用时间戳排序
     return history.sort((a, b) => new Date(a.date) - new Date(b.date));
   } catch (error) {
-    console.error('Error loading history:', error);
+    // console.error('Error loading history:', error);
     return [];
   }
 }
