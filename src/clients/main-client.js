@@ -19,18 +19,6 @@ const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 const USER_DATA_DIR = path.join(__dirname, '../../data/user');
 
-console.log(`
-╔═══════════════════════════════════════════════════════════╗
-║          去中心化安全社交网络 - 客户端                      ║
-║                                                           ║
-║  功能:                                                    ║
-║  - P2P注册                                                ║
-║  - 多设备检测                                              ║
-║  - 群组聊天（邀请码）                                      ║
-║  - 端到端加密                                             ║
-╚═══════════════════════════════════════════════════════════╝
-`);
-
 const args = process.argv.slice(2);
 const inviteArg = args.find(arg => arg.startsWith('--invite='));
 const inviteCodeFromCLI = inviteArg ? inviteArg.split('=')[1] : null;
