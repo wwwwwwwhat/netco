@@ -8,10 +8,8 @@ export class HyperswarmNode {
     this.topics = new Map();
     this.connections = new Set();
 
-    console.log(`✅ Hyperswarm 节点已创建`);
 
     this.swarm.on('connection', (conn) => {
-      console.log(`🔗 新连接建立! 总连接数: ${this.connections.size + 1}`);
 
       this.connections.add(conn);
 
@@ -35,11 +33,10 @@ export class HyperswarmNode {
 
       conn.on('close', () => {
         this.connections.delete(conn);
-        console.log(`🔌 连接关闭. 剩余连接数: ${this.connections.size}`);
       });
 
       conn.on('error', (err) => {
-        console.error(`❌ 连接错误: ${err.message}`);
+        console.error(`连接错误: ${err.message}`);
       });
     });
   }
@@ -47,7 +44,6 @@ export class HyperswarmNode {
   // 主题名hash成32字节key，等待DHT发现完成
   async joinTopic(topic, messageHandler) {
     if (this.topics.has(topic)) {
-      console.log(`⚠️  已经加入主题: ${topic}`);
       return;
     }
 
@@ -66,27 +62,25 @@ export class HyperswarmNode {
       handler: messageHandler
     });
 
-    console.log(`📻 已加入主题: ${topic}`);
-    console.log(`   主题Key: ${b4a.toString(topicKey, 'hex').substring(0, 16)}...`);
+    console.log(`已加入: ${topic}`);
   }
 
   async leaveTopic(topic) {
     const topicData = this.topics.get(topic);
     if (!topicData) {
-      console.log(`⚠️  未加入主题: ${topic}`);
+      console.log(`未加入: ${topic}`);
       return;
     }
 
     await topicData.discovery.destroy();
 
     this.topics.delete(topic);
-    console.log(`📻 已离开主题: ${topic}`);
   }
 
   // 广播到所有连接，不保证送达
   async publish(topic, message, from = 'anonymous', silent = false) {
     if (!this.topics.has(topic)) {
-      console.log(`⚠️  未加入主题: ${topic}`);
+      console.log(`未加入: ${topic}`);
       return;
     }
 
@@ -110,7 +104,6 @@ export class HyperswarmNode {
     }
 
     if (!silent && sentCount > 0) {
-      console.log(`📤 发送到 ${topic} (${sentCount} 个连接)`);
     }
   }
 
@@ -131,7 +124,6 @@ export class HyperswarmNode {
     }
 
     await this.swarm.destroy();
-    console.log(`🛑 Hyperswarm 节点已停止`);
   }
 }
 

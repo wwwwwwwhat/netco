@@ -5,7 +5,7 @@ import naclUtil from 'tweetnacl-util';
 import crypto from 'crypto';
 
 async function testGroupSecurity() {
-    console.log("=== 群组安全性测试 ===\n");
+    console.log("=== 群组安全测试 ===\n");
 
     const alice = await generateKeyPairFromCredentials("Alice", "password123");
     const bob = await generateKeyPairFromCredentials("Bob", "password123");
@@ -21,7 +21,7 @@ async function testGroupSecurity() {
     const bobGroup = { ...group, replayProtection: { isReplay: () => false } };
     const eveGroup = { ...group, replayProtection: { isReplay: () => false } };
 
-    console.log("\n--- 场景 1: 成员冒充测试 ---");
+    console.log("\n--- 场景1: 成员冒充 ---");
     
     const fakeContent = "I am Alice.";
     const encryptedFake = symmetricEncrypt(fakeContent, eveGroup.key);
@@ -35,26 +35,26 @@ async function testGroupSecurity() {
         signature: signatureA
     };
 
-    console.log("1. Eve 发送伪造消息 (Sender=Alice, SignedBy=Eve)...");
+    console.log("1. Eve发送伪造消息 (Sender=Alice, SignedBy=Eve)...");
     
     const resultA = handleGroupMessage(fakeMessageA, bobGroup, onlineUsers);
     
     if (resultA && resultA.sigStatus === false) {
-        console.log("冒充失败: 签名验证不通过 (预期结果)");
-        console.log(`   系统识别状态: ${resultA.sigStatus}`);
+        console.log("冒充失败: 签名验证不通过 (预期)");
+        console.log(`   状态: ${resultA.sigStatus}`);
     } else {
-        console.log("测试失败: 系统未检测到冒充行为");
+        console.log("测试失败: 未检测到冒充");
         console.log(resultA);
     }
 
-    console.log("\n--- 场景 2: 离群成员解密测试 ---");
+    console.log("\n--- 场景2: 离群成员解密 ---");
 
     const oldKey = eveGroup.key;
-    console.log(`1. Eve 持有旧密钥: ${naclUtil.encodeBase64(oldKey).substring(0, 10)}...`);
+    console.log(`1. Eve持有旧密钥: ${naclUtil.encodeBase64(oldKey).substring(0, 10)}...`);
 
     const newKey = crypto.randomBytes(32);
     bobGroup.key = newKey;
-    console.log(`2. 群组密钥已轮换: ${naclUtil.encodeBase64(newKey).substring(0, 10)}...`);
+    console.log(`2. 密钥已轮换: ${naclUtil.encodeBase64(newKey).substring(0, 10)}...`);
 
     const secretMsg = "This is a message for current members only.";
     const encryptedSecret = symmetricEncrypt(secretMsg, newKey);
@@ -67,29 +67,29 @@ async function testGroupSecurity() {
         signature: signMessage(encryptedSecret, alice.secretKeyRaw)
     };
 
-    console.log("3. Alice 发送新消息 (使用新密钥)...");
+    console.log("3. Alice发送新消息 (新密钥)...");
 
-    console.log("4. Eve 尝试使用旧密钥解密...");
+    console.log("4. Eve用旧密钥解密...");
     
     try {
         const decryptedByEve = symmetricDecrypt(validMessage.content, oldKey);
         if (decryptedByEve) {
-            console.log("测试失败: Eve 成功解密了新消息！");
+            console.log("测试失败: Eve成功解密");
             console.log(`   内容: ${decryptedByEve}`);
         } else {
-            console.log("解密失败: 返回 null (预期结果)");
+            console.log("解密失败: 返回null (预期)");
         }
     } catch (e) {
-        console.log("解密抛出异常 (预期结果)");
-        console.log(`   错误信息: ${e.message}`);
+        console.log("解密异常 (预期)");
+        console.log(`   错误: ${e.message}`);
     }
 
-    console.log("5. Bob (已更新密钥) 尝试解密...");
+    console.log("5. Bob(已更新)解密...");
     const resultBob = handleGroupMessage(validMessage, bobGroup, onlineUsers);
     if (resultBob && resultBob.content === secretMsg) {
-        console.log(`Bob 解密成功: "${resultBob.content}"`);
+        console.log(`Bob解密成功: "${resultBob.content}"`);
     } else {
-        console.log("Bob 解密失败");
+        console.log("Bob解密失败");
     }
 }
 

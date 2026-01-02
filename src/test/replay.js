@@ -6,7 +6,7 @@ import { ReplayProtection } from '../utils/security/replay_protection.js';
 import naclUtil from 'tweetnacl-util';
 
 async function testReplayAttack() {
-    console.log("=== 开始重放攻击测试 ===\n");
+    console.log("=== 重放攻击测试 ===\n");
 
     const alice = await generateKeyPairFromCredentials("Alice", "password123");
     const bob = await generateKeyPairFromCredentials("Bob", "password123");
@@ -15,7 +15,7 @@ async function testReplayAttack() {
     onlineUsers.set("Alice", { publicKey: alice.publicKey });
     onlineUsers.set("Bob", { publicKey: bob.publicKey });
 
-    console.log("--- 测试 1: 群组通信防重放 ---");
+    console.log("--- 测试1: 群组防重放 ---");
     
     const group = createGroup("TestGroup", { username: "Alice" });
     
@@ -29,24 +29,24 @@ async function testReplayAttack() {
         signature: "MockSignature" // 签名验证在防重放之后，不影响测试
     };
 
-    console.log("1. 第一次接收群消息...");
+    console.log("1. 第一次接收...");
     try {
         const result1 = handleGroupMessage(groupMsgData, group, onlineUsers);
         if (result1 !== null) {
-            console.log("第一次接收成功");
+            console.log("接收成功");
         } else {
-            console.log("第一次接收失败");
+            console.log("接收失败");
         }
     } catch (e) {
-        console.log("第一次接收出错:", e.message);
+        console.log("接收出错:", e.message);
     }
 
-    console.log("2. 尝试重放同一条消息...");
+    console.log("2. 重放同一条消息...");
     const result2 = handleGroupMessage(groupMsgData, group, onlineUsers);
     if (result2 === null) {
-        console.log("重放攻击被拦截");
+        console.log("重放被拦截");
     } else {
-        console.log("重放攻击成功");
+        console.log("重放成功");
     }
 
     console.log("3. 测试过期消息...");
@@ -56,10 +56,10 @@ async function testReplayAttack() {
     if (result3 === null) {
         console.log("过期消息被拦截");
     } else {
-        console.log("过期消息未被拦截");
+        console.log("过期消息未拦截");
     }
 
-    console.log("\n--- 测试 2: 私聊通信防重放 ---");
+    console.log("\n--- 测试2: 私聊防重放 ---");
 
     const dmContent = "Hello Bob, this is a secret.";
     const encryptedContent = encryptMessage(
@@ -83,22 +83,22 @@ async function testReplayAttack() {
         replayProtection: new ReplayProtection()
     };
 
-    console.log("1. 第一次接收私聊消息...");
+    console.log("1. 第一次接收私聊...");
     const decrypted1 = handleDMMessage(dmMsgData, bobDMSession, bob, { username: "Bob" });
     
     if (decrypted1) {
-        console.log(`第一次解密成功: "${decrypted1.content}"`);
+        console.log(`解密成功: "${decrypted1.content}"`);
     } else {
-        console.log("第一次解密失败");
+        console.log("解密失败");
     }
 
-    console.log("2. 尝试重放同一条私聊消息...");
+    console.log("2. 重放同一条消息...");
     const decrypted2 = handleDMMessage(dmMsgData, bobDMSession, bob, { username: "Bob" });
 
     if (decrypted2) {
-        console.log(`重放攻击成功（"${decrypted2.content}"）`);
+        console.log(`重放成功（"${decrypted2.content}"）`);
     } else {
-        console.log("重放攻击被拦截");
+        console.log("重放被拦截");
     }
 }
 

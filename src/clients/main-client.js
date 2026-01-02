@@ -23,9 +23,9 @@ console.log(`
 ╔═══════════════════════════════════════════════════════════╗
 ║          去中心化安全社交网络 - 客户端                      ║
 ║                                                           ║
-║  ✨ 功能:                                                 ║
-║  - P2P 用户注册系统                                        ║
-║  - 多设备登录检测                                          ║
+║  功能:                                                    ║
+║  - P2P注册                                                ║
+║  - 多设备检测                                              ║
 ║  - 群组聊天（邀请码）                                      ║
 ║  - 端到端加密                                             ║
 ╚═══════════════════════════════════════════════════════════╝
@@ -79,7 +79,7 @@ function saveLocalUser(userData) {
 }
 
 async function attemptLogin() {
-  console.log('\n🔐 用户登录/注册');
+  console.log('\n登录/注册');
   const credentials = await promptLogin();
   
   const localUser = loadLocalUser(credentials.username);
@@ -87,24 +87,24 @@ async function attemptLogin() {
 
   if (localUser) {
     if (localUser.passwordHash !== credentials.passwordHash) {
-      console.log(`\n❌ 登录失败: 密码错误！`);
+      console.log(`\n密码错误`);
       throw { code: 'WRONG_PASSWORD' };
     }
   } else {
     isNewUser = true;
-    console.log(`\n📝 检测到新用户 "${credentials.username}"，正在注册...`);
+    console.log(`\n新用户 "${credentials.username}"，注册中...`);
 
     const limitCheck = checkRegistrationLimits();
     if (!limitCheck.allowed) {
-      console.log(`\n❌ 注册被拒绝: ${limitCheck.reason}`);
+      console.log(`\n注册被拒: ${limitCheck.reason}`);
       throw { code: 'REGISTRATION_LIMIT' };
     }
 
     // 密码要求：8位以上，大小写+数字+下划线
     const pwdRegex = /^(?=.*[a-z])(?=.*[A-Z])(?=.*\d)(?=.*_)[A-Za-z\d_]{8,}$/;
     if (!pwdRegex.test(credentials.password)) {
-       console.log('❌ 密码不符合安全要求');
-       console.log('   要求：至少8位，包含大写字母、小写字母、数字和下划线');
+       console.log('密码不符合要求');
+       console.log('至少8位，大小写+数字+下划线');
        throw { code: 'WRONG_PASSWORD' };
     }
 
@@ -112,7 +112,7 @@ async function attemptLogin() {
   }
 
   // 等冲突检测完再显示登录成功
-  console.log('🔐 正在生成身份密钥...');
+  console.log('生成密钥中...');
   const userKeys = await generateKeyPairFromCredentials(credentials.username, credentials.password);
 
   initStorage(credentials.username, credentials.password);
@@ -127,7 +127,7 @@ async function attemptLogin() {
     recordRegistration(credentials.username);
   }
 
-  console.log('🌐 正在创建 P2P 节点...');
+  console.log('创建P2P节点中...');
   const node = new HyperswarmNode();
 
   let currentGroup = null;
@@ -169,7 +169,7 @@ async function attemptLogin() {
     await node.stop();
   };
 
-  console.log(`\n🔊 正在加入用户注册表...`);
+  console.log(`\n加入用户注册表...`);
   await node.joinTopic(USER_REGISTRY_TOPIC, async (msg) => {
     try {
       const data = JSON.parse(msg.data);
@@ -179,17 +179,14 @@ async function attemptLogin() {
 
         // 同用户名登录冲突检测
         if (username === credentials.username && remoteSessionId !== sessionId) {
-          console.log(`\n⚠️  检测到用户 "${username}" 在其他设备登录！`);
-          console.log(`   时间: ${new Date(remoteTimestamp).toLocaleString()}`);
-          console.log(`   会话ID: ${remoteSessionId}`);
+          console.log(`\n用户 "${username}" 在其他设备登录`);
 
           // 公钥相同说明密码相同，用时间戳判断先后
           if (publicKey === userKeys.publicKey) {
             if (!hasAlertedConflict && !conflictHandled) {
               // 对方先登录则我退出
               if (remoteTimestamp < loginTimestamp) {
-                console.log(`\n⚠️  该账户已登录`);
-                console.log(`   提示: 该账号正在其他设备使用中`);
+                console.log(`\n账户已登录，其他设备在用`);
 
                 hasAlertedConflict = true;
                 conflictHandled = true;
@@ -202,7 +199,7 @@ async function attemptLogin() {
                 }), 'system', true);
 
                 shouldExit = true;
-                console.log(`\n⏳ 3秒后返回登录界面...`);
+                console.log(`\n3秒后返回登录...`);
                 setTimeout(async () => {
                   await cleanup();
                   const error = new Error('该账户已登录');
@@ -214,14 +211,13 @@ async function attemptLogin() {
           } else {
             // 公钥不同说明密码错误，用户名已被占用
             if (!hasAlertedConflict && !conflictHandled) {
-              console.log(`\n❌ 该用户已存在`);
-              console.log(`   提示: 该用户名已被其他人使用`);
+              console.log(`\n用户已存在，用户名被占用`);
 
               hasAlertedConflict = true;
               conflictHandled = true;
 
               shouldExit = true;
-              console.log(`\n⏳ 3秒后返回登录界面...`);
+              console.log(`\n3秒后返回登录...`);
               setTimeout(async () => {
                 await cleanup();
                 const error = new Error('该用户已存在');
@@ -240,7 +236,7 @@ async function attemptLogin() {
             timestamp: remoteTimestamp
           });
           if (isNewUser) {
-            console.log(`\n👤 发现在线用户: ${username}`);
+            console.log(`\n在线: ${username}`);
           }
 
           // 自动加入群组成员列表
@@ -264,12 +260,11 @@ async function attemptLogin() {
       }
 
       if (data.type === 'dm_signal' && data.target === credentials.username) {
-        console.log(`\n📩 收到来自 ${data.sender} 的私聊请求`);
-        console.log(`   输入 /dm ${data.sender} 即可开始聊天`);
+        console.log(`\n${data.sender} 发来私聊请求，输入 /dm ${data.sender} 开始`);
       }
 
       if (data.type === 'login_alert' && data.username === credentials.username) {
-        console.log(`\n🚨 安全警告: ${data.message}`);
+        console.log(`\n警告: ${data.message}`);
       }
 
       if (data.type === 'user_logout') {
@@ -277,13 +272,13 @@ async function attemptLogin() {
         const user = onlineUsers.get(username);
         if (user && user.sessionId === remoteSessionId) {
           onlineUsers.delete(username);
-          console.log(`\n👋 用户下线: ${username}`);
+          console.log(`\n下线: ${username}`);
 
           // 成员离开时触发密钥轮换选举
           if (currentGroup && currentGroup.type === 'group' && currentGroup.members && currentGroup.members.includes(username)) {
             currentGroup.members = currentGroup.members.filter(m => m !== username);
 
-            console.log(`\n🔐 群组成员 ${username} 离开，发布轮换选举...`);
+            console.log(`\n${username} 离开，触发密钥轮换`);
 
             try {
               const payloadObj = {
@@ -312,7 +307,6 @@ async function attemptLogin() {
     }
   });
 
-  console.log(`⏳ 等待 P2P 网络连接建立...`);
 
   // 同时等网络建立和冲突检测
   try {
@@ -333,7 +327,6 @@ async function attemptLogin() {
 
   showLoginSuccess(credentials.username, userKeys.publicKey);
 
-  console.log(`📢 广播用户登录...`);
   await node.publish(USER_REGISTRY_TOPIC, JSON.stringify({
     type: 'user_login',
     username: credentials.username,
@@ -363,16 +356,7 @@ async function attemptLogin() {
     flushCache(credentials.username);
   }, 5 * 60 * 1000);
 
-  console.log(`\n✅ 节点已创建！\n`);
-  console.log(`💡 命令帮助:`);
-  console.log(`   /create <群组名>  - 创建新群组并生成邀请码`);
-  console.log(`   /join <邀请码>    - 使用邀请码加入群组`);
-  console.log(`   /dm <用户名>      - 发起私聊 (端到端加密)`);
-  console.log(`   /invite           - 显示当前群组的邀请码`);
-  console.log(`   /users            - 查看在线用户`);
-  console.log(`   /stats            - 查看统计信息`);
-  console.log(`   /exit             - 退出程序`);
-  console.log(`   直接输入消息      - 发送到当前群组\n`);
+  console.log(`\n就绪，命令: /create /join /dm /invite /users /stats /exit\n`);
 
   // 如果通过命令行提供了邀请码，自动加入
   if (inviteCodeFromCLI) {
@@ -433,7 +417,6 @@ async function attemptLogin() {
 
     currentGroup.key = newKey;
     currentGroup.lastRotationAt = Date.now();
-    console.log(`\n🔄 已分发并更新本地群组密钥（发起者: ${initiatorUsername}）`);
   }
 
   const createMessageHandler = () => {
@@ -451,7 +434,7 @@ async function attemptLogin() {
              const decrypted = decryptMessage(data.content, currentGroup.peerPublicKey, userKeys.secretKeyRaw);
              if (decrypted) {
                  const timestamp = new Date(data.timestamp).toLocaleTimeString();
-                 console.log(`\n💬 [${timestamp}] ${data.sender} (私密): ${decrypted}`);
+                 console.log(`\n[${timestamp}] ${data.sender} (私密): ${decrypted}`);
                  
                  cacheMessage(credentials.username, {
                     type: 'direct_message',
@@ -561,7 +544,7 @@ async function attemptLogin() {
              const isValid = verifySignature(data.content, data.signature, senderKeyRaw);
              sigStatus = Boolean(isValid);
              if (!isValid) {
-               console.log(`\n⚠️  收到消息 [${data.sender}]，但签名无效！`);
+               console.log(`\n消息签名无效 [${data.sender}]`);
              }
            }
         }
@@ -570,7 +553,7 @@ async function attemptLogin() {
 
         if (decrypted && data.sender !== credentials.username) {
           const timestamp = new Date(data.timestamp).toLocaleTimeString();
-          console.log(`\n💬 [${timestamp}] ${data.sender} ${sigStatus}: ${decrypted}`);
+          console.log(`\n[${timestamp}] ${data.sender} ${sigStatus}: ${decrypted}`);
           if (currentGroup && currentGroup.type === 'group') {
             currentGroup.lastActiveSender = data.sender;
           }
@@ -584,19 +567,15 @@ async function attemptLogin() {
 
   async function joinGroupWithInvite(code, node, credentials, currentGroupRef, rl) {
     try {
-      console.log(`\n🔍 正在解析邀请码...`);
       const cleanCode = unformatInviteCode(code);
       const invite = parseInviteCode(cleanCode);
 
       if (invite.isExpired) {
-        console.log(`\n⚠️  邀请码已过期（创建于 ${new Date(invite.createdAt).toLocaleString()}）`);
+        console.log(`\n邀请码已过期（${new Date(invite.createdAt).toLocaleString()}）`);
         return;
       }
 
-      console.log(`\n✅ 邀请码有效！`);
-      console.log(`   群组名称: "${invite.groupName}"`);
-      console.log(`   创建者: ${invite.creator}`);
-      console.log(`   创建时间: ${new Date(invite.createdAt).toLocaleString()}`);
+      console.log(`\n邀请码有效，群组: "${invite.groupName}"`);
 
       const topic = `group-${invite.groupId}`;
       
@@ -617,26 +596,15 @@ async function attemptLogin() {
       currentGroup.lastRotationAt = 0;
       currentGroup.lastActiveSender = invite.creator || credentials.username;
 
-      console.log(`\n📻 正在加入群组...`);
 
       await node.joinTopic(topic, createMessageHandler());
 
-      console.log(`\n⏳ 等待发现其他成员（局域网可能需要10-15秒）...`);
       await new Promise(resolve => setTimeout(resolve, 10000));
 
       const stats = node.getStats();
-      console.log(`\n✅ 就绪！当前连接数: ${stats.totalConnections}`);
-
-      if (stats.totalConnections === 0) {
-        console.log(`\n⚠️  提示: 连接数为0可能是因为:`);
-        console.log(`   - 其他成员还未在线`);
-        console.log(`   - 防火墙阻止了连接`);
-        console.log(`   - 需要等待更长时间让 DHT 发现节点`);
-      }
-
-      console.log(`\n💬 现在可以开始聊天了！\n`);
+      console.log(`\n就绪，连接数: ${stats.totalConnections}`);
     } catch (error) {
-      console.log(`\n❌ 无法加入群组: ${error.message}`);
+      console.log(`\n加入失败: ${error.message}`);
     }
   }
 
@@ -677,29 +645,15 @@ async function attemptLogin() {
             currentGroup.lastRotationAt = 0;
             currentGroup.lastActiveSender = credentials.username;
 
-            console.log(`\n✅ 群组已创建: "${groupName}"`);
-            console.log(`📋 群组ID: ${groupId}`);
-            console.log(`\n🎟️  邀请码（分享给朋友）:`);
-            console.log(`   ${formatted}`);
-            console.log(`\n💡 朋友可以这样加入:`);
-            console.log(`   npm run net-co`);
-            console.log(`   然后输入: /join ${inviteCode.substring(0, 48)}...`);
-            console.log(`\n正在加入群组...`);
+            console.log(`\n群组已创建: "${groupName}"`);
+            console.log(`邀请码: ${formatted}`);
 
             await node.joinTopic(topic, createMessageHandler());
 
-            console.log(`\n⏳ 等待其他成员加入（局域网可能需要10-15秒）...`);
             await new Promise(resolve => setTimeout(resolve, 10000));
 
             const stats = node.getStats();
-            console.log(`\n✅ 就绪！当前连接数: ${stats.totalConnections}`);
-
-            if (stats.totalConnections === 0) {
-              console.log(`\n⚠️  提示: 连接数为0可能是因为:`);
-              console.log(`   - 其他成员还未加入`);
-              console.log(`   - 防火墙阻止了连接`);
-              console.log(`   - 需要等待更长时间让 DHT 发现节点`);
-            }
+            console.log(`\n就绪，连接数: ${stats.totalConnections}`);
           }
           break;
 
@@ -707,17 +661,17 @@ async function attemptLogin() {
           {
             const targetUser = args[0];
             if (!targetUser) {
-               console.log('⚠️  请指定用户名: /dm <username>');
+               console.log('需要用户名: /dm <username>');
                break;
             }
             if (targetUser === credentials.username) {
-               console.log('⚠️  不能和自己聊天');
+               console.log('不能和自己聊');
                break;
             }
             
             const peer = onlineUsers.get(targetUser);
             if (!peer) {
-               console.log(`⚠️  用户 ${targetUser} 不在线`);
+               console.log(`${targetUser} 不在线`);
                break;
             }
 
@@ -743,29 +697,27 @@ async function attemptLogin() {
                 replayProtection: replayProtection
             };
 
-            console.log(`\n💬 正在进入与 ${targetUser} 的私聊频道...`);
+            console.log(`\n进入私聊: ${targetUser}`);
             
             const history = loadHistory(credentials.username, naclUtil.encodeBase64(currentGroup.peerPublicKey), 'direct');
             if (history.length > 0) {
-                console.log(`\n📜 --- 历史记录 ---`);
+                console.log(`\n历史记录:`);
                 for (const msg of history) {
                     const time = new Date(msg.timestamp).toLocaleString();
                     const sender = msg.senderName === credentials.username ? '我' : msg.senderName;
                     console.log(`[${time}] ${sender}: ${msg.content}`);
                 }
-                console.log(`📜 ------------------\n`);
+                console.log();
             }
 
             await node.joinTopic(dmTopic, createMessageHandler());
-            console.log(`✅ 已加入私聊频道`);
           }
           break;
 
         case '/rotate':
           if (!currentGroup || currentGroup.type !== 'group') {
-            console.log(`\n⚠️  请先创建或加入一个群组 (私聊不支持密钥轮换)`);
+            console.log(`\n需要先加入群组`);
           } else {
-            console.log(`\n🔄 正在轮换群组密钥并向在线成员分发...`);
             try {
               await performGroupKeyRotation(credentials.username);
             } catch (e) {
@@ -778,8 +730,7 @@ async function attemptLogin() {
           {
             const code = args.join(' ');
             if (!code) {
-              console.log(`\n⚠️  请提供邀请码`);
-              console.log(`   用法: /join <邀请码>`);
+              console.log(`\n需要邀请码: /join <邀请码>`);
             } else {
               await joinGroupWithInvite(code, node, credentials, currentGroup, rl);
             }
@@ -788,25 +739,22 @@ async function attemptLogin() {
 
         case '/invite':
           if (!currentGroup) {
-            console.log(`\n⚠️  请先创建或加入一个群组`);
+            console.log(`\n需要先加入群组`);
           } else {
             const formatted = formatInviteCode(currentGroup.inviteCode);
-            console.log(`\n🎟️  "${currentGroup.name}" 的邀请码:`);
-            console.log(`   ${formatted}`);
-            console.log(`\n📋 完整邀请码（可复制）:`);
-            console.log(`   ${currentGroup.inviteCode}`);
+            console.log(`\n邀请码: ${formatted}`);
           }
           break;
 
         case '/users':
           {
-            console.log(`\n👥 在线用户列表 (${onlineUsers.size}):`);
+            console.log(`\n在线用户 (${onlineUsers.size}):`);
             if (onlineUsers.size === 0) {
-              console.log(`   (无其他在线用户)`);
+              console.log(`(无)`);
             } else {
               for (const [username, user] of onlineUsers) {
                 const timeAgo = Math.floor((Date.now() - user.timestamp) / 1000);
-                console.log(`   - ${username} (${timeAgo}秒前上线)`);
+                console.log(`- ${username} (${timeAgo}秒前)`);
               }
             }
           }
@@ -815,48 +763,34 @@ async function attemptLogin() {
         case '/stats':
           {
             const stats = node.getStats();
-            console.log(`\n📊 统计信息:`);
-            console.log(`   用户名: ${credentials.username}`);
-            console.log(`   会话ID: ${sessionId}`);
-            console.log(`   连接数: ${stats.totalConnections}`);
-            console.log(`   在线用户: ${onlineUsers.size}`);
-            console.log(`   加入的主题: ${stats.topics.join(', ') || '无'}`);
-
-            if (currentGroup) {
-              console.log(`\n📁 当前群组:`);
-              console.log(`   名称: ${currentGroup.name}`);
-              console.log(`   ID: ${currentGroup.id}`);
-            }
+          console.log(`\n统计:`);
+          console.log(`用户: ${credentials.username}`);
+          console.log(`连接: ${stats.totalConnections}`);
+          console.log(`在线: ${onlineUsers.size}`);
+          if (currentGroup) {
+            console.log(`群组: ${currentGroup.name}`);
+          }
           }
           break;
 
         case '/exit':
-          console.log('\n👋 正在退出...');
+          console.log('\n退出...');
           await cleanup();
           rl.close();
           process.exit(0);
           break;
 
         case '/help':
-          console.log(`\n💡 命令帮助:`);
-          console.log(`   /create <群组名>  - 创建新群组并生成邀请码`);
-          console.log(`   /join <邀请码>    - 使用邀请码加入群组`);
-          console.log(`   /dm <用户名>      - 发起私聊 (端到端加密)`);
-          console.log(`   /invite           - 显示当前群组的邀请码`);
-          console.log(`   /users            - 查看在线用户`);
-          console.log(`   /stats            - 查看统计信息`);
-          console.log(`   /exit             - 退出程序`);
-          console.log(`   直接输入消息      - 发送到当前群组`);
+          console.log(`\n命令: /create /join /dm /invite /users /stats /exit`);
           break;
 
         default:
-          console.log(`\n⚠️  未知命令: ${cmd}`);
-          console.log(`   输入 /help 查看帮助`);
+          console.log(`\n未知命令: ${cmd}，输入 /help 查看`);
       }
 
     } else if (message) {
       if (!currentGroup) {
-        console.log(`\n⚠️  请先使用 /create 创建或 /join 加入一个群组，或使用 /dm 发起私聊`);
+        console.log(`\n需要先创建/加入群组，或使用 /dm 私聊`);
       } else {
         if (currentGroup.type === 'dm') {
             const encrypted = encryptMessage(message, currentGroup.peerPublicKey, userKeys.secretKeyRaw);
@@ -871,7 +805,6 @@ async function attemptLogin() {
                 signature: signature,
                 timestamp: timestamp
             }));
-             console.log(`✓ 已发送（端到端加密）`);
 
              // 缓存发送的消息
              cacheMessage(credentials.username, {
@@ -899,7 +832,6 @@ async function attemptLogin() {
               })
             );
             currentGroup.lastActiveSender = credentials.username;
-            console.log(`✓ 已发送（加密+签名）`);
         }
       }
     }
@@ -908,7 +840,6 @@ async function attemptLogin() {
   });
 
   rl.on('close', async () => {
-    console.log('\n👋 Goodbye!');
     await cleanup();
     process.exit(0);
   });
@@ -918,7 +849,7 @@ async function main() {
   initRegistry();
 
   process.on('SIGINT', () => {
-    console.log('\n[System] 正在保存数据并退出...');
+    console.log('\n保存数据中...');
     saveRegistryToDisk();
     process.exit(0);
   });
@@ -934,7 +865,7 @@ async function main() {
       } else if (error.code === 'REGISTRATION_LIMIT') {
         process.exit(1);
       } else {
-        console.error('❌ 错误:', error);
+        console.error('错误:', error);
         process.exit(1);
       }
     }
@@ -942,6 +873,6 @@ async function main() {
 }
 
 main().catch(error => {
-  console.error('❌ 未捕获的错误:', error);
+  console.error('未捕获的错误:', error);
   process.exit(1);
 });

@@ -12,7 +12,7 @@ export async function promptLogin(defaultUsername = null) {
       const finalUsername = username.trim() || defaultUsername;
 
       if (!finalUsername) {
-        console.log('❌ 用户名不能为空！');
+        console.log('用户名不能为空');
         rl.close();
         process.exit(1);
       }
@@ -23,7 +23,7 @@ export async function promptLogin(defaultUsername = null) {
         rl.close();
 
         if (!password) {
-          console.log('❌ 密码不能为空！');
+          console.log('密码不能为空');
           process.exit(1);
         }
 
@@ -41,8 +41,8 @@ export async function promptLogin(defaultUsername = null) {
 }
 
 export function showLoginSuccess(username, publicKey) {
-  console.log(`✅ 登录成功！`);
-  console.log(`   用户名: ${username}`);
-  console.log(`   公钥: ${publicKey.substring(0, 32)}...`);
+  console.log(`登录成功`);
+  console.log(`用户: ${username}`);
+  console.log(`公钥: ${publicKey.substring(0, 32)}...`);
   console.log();
 }

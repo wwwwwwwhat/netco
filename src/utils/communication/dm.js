@@ -18,7 +18,6 @@ export async function initiateDMSession(targetUsername, node, credentials, onlin
         throw new Error(`用户 "${targetUsername}" 不在线`);
     }
 
-    console.log(`\n🔗 正在建立与 ${targetUsername} 的加密通道...`);
 
     // 用户名排序确保topic唯一
     const participants = [credentials.username, targetUsername].sort();
