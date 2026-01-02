@@ -1,9 +1,6 @@
 import crypto from 'crypto';
 
-/**
- * 执行工作量证明，防止垃圾注册
- * @param {number} difficulty - 前导零的个数 (默认4，大约需要几秒钟)
- */
+// 简单PoW，防止垃圾注册，默认4个前导零
 export async function performPoW(difficulty = 4) {
   const prefix = '0'.repeat(difficulty);
   const timestamp = Date.now().toString();
@@ -14,7 +11,6 @@ export async function performPoW(difficulty = 4) {
     const BATCH_SIZE = 5000; 
     const loop = () => {
       for (let i = 0; i < BATCH_SIZE; i++) {
-        // 简单的 PoW: SHA256(timestamp + nonce)
         const hash = crypto.createHash('sha256')
           .update(timestamp + nonce.toString())
           .digest('hex');
@@ -22,12 +18,11 @@ export async function performPoW(difficulty = 4) {
         if (hash.startsWith(prefix)) {
           const duration = (Date.now() - start) / 1000;
           resolve(nonce);
-          return; // 结束循环
+          return;
         }
         nonce++;
       }
       
-      // 继续下一批
       setImmediate(loop);
     };
     

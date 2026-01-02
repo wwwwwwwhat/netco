@@ -1,5 +1,5 @@
 /**
- * 主要用于测试
+ * 主要为了方便测试
  */
 
 import { encryptMessage, decryptMessage } from '../../crypto/encryption.js';
@@ -20,6 +20,7 @@ export async function initiateDMSession(targetUsername, node, credentials, onlin
 
     console.log(`\n🔗 正在建立与 ${targetUsername} 的加密通道...`);
 
+    // 用户名排序确保topic唯一
     const participants = [credentials.username, targetUsername].sort();
     const topicStr = `dm-${participants.join('-')}`;
     
@@ -67,7 +68,6 @@ export async function sendDMMessage(content, currentGroup, node, credentials, us
 }
 
 export function handleDMMessage(data, currentGroup, userKeys, credentials) {
-    // 防重放检查
     if (currentGroup.replayProtection && currentGroup.replayProtection.isReplay(data.sender, data.content, data.timestamp)) {
         return null;
     }

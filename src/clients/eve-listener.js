@@ -1,8 +1,3 @@
-/**
- * Eve - 窃听者客户端
- * 用于演示第三方无法解密群组消息
- */
-
 import '../polyfill.js';
 import HyperswarmNode from '../network/hyperswarmNode.js';
 import { symmetricDecrypt } from '../crypto/encryption.js';
@@ -40,11 +35,11 @@ rl.question('请输入群组ID: ', async (groupId) => {
   const node = new HyperswarmNode();
   const topic = `group-${groupId.trim()}`;
 
-  // 一些常见的错误密钥（模拟暴力破解尝试）
+  // 用错误密钥模拟暴力破解
   const wrongKeys = [
-    crypto.randomBytes(32), // 随机密钥1
-    crypto.randomBytes(32), // 随机密钥2
-    crypto.randomBytes(32), // 随机密钥3
+    crypto.randomBytes(32),
+    crypto.randomBytes(32),
+    crypto.randomBytes(32),
     Buffer.from('0000000000000000000000000000000000000000000000000000000000000000', 'hex'),
     Buffer.from('ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff', 'hex')
   ];
@@ -57,12 +52,10 @@ rl.question('请输入群组ID: ', async (groupId) => {
 
   await node.joinTopic(topic, (msg) => {
     try {
-      // 调试：查看原始消息
       console.log(`\n[调试] 收到原始消息:`, msg);
 
       const data = JSON.parse(msg.data);
 
-      // 调试：查看解析后的数据
       console.log(`[调试] 解析后的数据:`, data);
 
       messageCount++;
@@ -76,7 +69,6 @@ rl.question('请输入群组ID: ', async (groupId) => {
 
       console.log(`\n🔓 尝试暴力破解...`);
 
-      // 尝试用错误的密钥解密
       wrongKeys.forEach((key, index) => {
         decryptAttempts++;
         try {
@@ -95,7 +87,6 @@ rl.question('请输入群组ID: ', async (groupId) => {
       console.log(`\n❌ 破解失败！无法解密消息内容。`);
       console.log(`💡 这证明了端到端加密的安全性！\n`);
 
-      // 显示统计
       console.log(`📊 窃听统计:`);
       console.log(`   截获消息: ${messageCount} 条`);
       console.log(`   解密尝试: ${decryptAttempts} 次`);
@@ -104,18 +95,16 @@ rl.question('请输入群组ID: ', async (groupId) => {
       console.log(`${'='.repeat(60)}\n`);
 
     } catch (error) {
-      // 显示错误以便调试
       console.log(`\n[调试] 处理消息时出错:`, error.message);
     }
   });
 
-  // 等待 P2P 网络连接建立（重要！）
+  // 等DHT发现完成
   console.log(`⏳ 等待 P2P 网络连接建立...`);
   await new Promise(resolve => setTimeout(resolve, 5000));
 
   console.log(`\n👂 正在监听，等待消息...\n`);
 
-  // 处理退出
   process.on('SIGINT', async () => {
     console.log(`\n\n最终统计:`);
     console.log(`   截获消息: ${messageCount} 条`);

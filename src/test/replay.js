@@ -8,24 +8,17 @@ import naclUtil from 'tweetnacl-util';
 async function testReplayAttack() {
     console.log("=== 开始重放攻击测试 ===\n");
 
-    // 1. 准备用户身份
     const alice = await generateKeyPairFromCredentials("Alice", "password123");
     const bob = await generateKeyPairFromCredentials("Bob", "password123");
     
-    // 模拟在线用户列表
     const onlineUsers = new Map();
     onlineUsers.set("Alice", { publicKey: alice.publicKey });
     onlineUsers.set("Bob", { publicKey: bob.publicKey });
 
-    // ==========================================
-    // 测试 1: 群组通信 (应该有防重放保护)
-    // ==========================================
     console.log("--- 测试 1: 群组通信防重放 ---");
     
-    // Alice 创建群组
     const group = createGroup("TestGroup", { username: "Alice" });
     
-    // 构造合法的群消息内容
     const plainText = "Hello Group";
     const encryptedGroupContent = symmetricEncrypt(plainText, group.key);
 
@@ -56,9 +49,8 @@ async function testReplayAttack() {
         console.log("重放攻击成功");
     }
 
-    // 测试过期消息
     console.log("3. 测试过期消息...");
-    const oldTimestamp = Date.now() - (10 * 60 * 1000); // 10分钟前
+    const oldTimestamp = Date.now() - (10 * 60 * 1000);
     const oldMsgData = { ...groupMsgData, timestamp: oldTimestamp };
     const result3 = handleGroupMessage(oldMsgData, group, onlineUsers);
     if (result3 === null) {
@@ -67,15 +59,9 @@ async function testReplayAttack() {
         console.log("过期消息未被拦截");
     }
 
-
-    // ==========================================
-    // 测试 2: 私聊通信 (目前可能存在漏洞)
-    // ==========================================
     console.log("\n--- 测试 2: 私聊通信防重放 ---");
 
-    // 模拟 Bob 接收 Alice 的私聊
     const dmContent = "Hello Bob, this is a secret.";
-    // Alice 加密给 Bob
     const encryptedContent = encryptMessage(
         dmContent, 
         naclUtil.decodeBase64(bob.publicKey), 
@@ -89,7 +75,6 @@ async function testReplayAttack() {
         timestamp: Date.now()
     };
 
-    // Bob 的当前会话对象
     const bobDMSession = {
         type: 'dm',
         target: "Alice",

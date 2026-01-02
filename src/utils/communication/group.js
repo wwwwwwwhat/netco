@@ -1,5 +1,5 @@
 /**
- * 主要用于测试
+ * 主要为了方便测试
  */
 
 import { symmetricEncrypt, symmetricDecrypt } from '../../crypto/encryption.js';
@@ -55,6 +55,7 @@ export function joinGroup(inviteCodeStr) {
     };
 }
 
+// 对称加密+签名
 export async function sendGroupMessage(content, currentGroup, node, credentials, userKeys) {
     const encryptedContent = symmetricEncrypt(content, currentGroup.key);
     const signature = signMessage(encryptedContent, userKeys.secretKeyRaw);

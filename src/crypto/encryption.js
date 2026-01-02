@@ -1,8 +1,3 @@
-/**
- * encryption.js
- * 安全层：消息加密实现
- */
-
 import nacl from 'tweetnacl';
 import naclUtil from 'tweetnacl-util';
 import crypto from 'crypto';
@@ -12,21 +7,11 @@ import { hashData } from './digest.js';
 const b64_encode = naclUtil.encodeBase64;
 const b64_decode = naclUtil.decodeBase64;
 
-/**
- * 加密消息
- * @param {string} message - 要加密的消息
- * @param {Uint8Array} recipientPublicKey - 接收方的公钥(Ed25519原始格式)
- * @param {Uint8Array} senderSecretKey - 发送方的私钥(Ed25519原始格式)
- * @returns {string} Base64编码的加密消息
- */
+// 非对称加密，Ed25519转Curve25519才能用nacl.box
 export function encryptMessage(message, recipientPublicKey, senderSecretKey) {
-  // 将消息转换为字节数组
   const messageBytes = new TextEncoder().encode(message);
-
-  // 生成随机nonce (24字节)
   const nonce = nacl.randomBytes(24);
 
-  // 转换密钥 Ed25519 -> Curve25519
   const senderEncryptSecret = ed2curve.convertSecretKey(senderSecretKey);
   const recipientEncryptPublic = ed2curve.convertPublicKey(recipientPublicKey);
 
@@ -34,7 +19,6 @@ export function encryptMessage(message, recipientPublicKey, senderSecretKey) {
     throw new Error('密钥转换失败: 无效的 Ed25519 密钥');
   }
 
-  // 使用 Box 加密
   const encryptedMessage = nacl.box(
     messageBytes,
     nonce,
@@ -42,7 +26,7 @@ export function encryptMessage(message, recipientPublicKey, senderSecretKey) {
     senderEncryptSecret
   );
 
-  // 将 nonce 和加密消息组合
+  // nonce放前面，方便解密时提取
   const fullMessage = new Uint8Array(nonce.length + encryptedMessage.length);
   fullMessage.set(nonce);
   fullMessage.set(encryptedMessage, nonce.length);
@@ -50,13 +34,6 @@ export function encryptMessage(message, recipientPublicKey, senderSecretKey) {
   return b64_encode(fullMessage);
 }
 
-/**
- * 解密消息
- * @param {string} encryptedMessageBase64 - Base64编码的加密消息
- * @param {Uint8Array} senderPublicKey - 发送方的公钥(Ed25519原始格式)
- * @param {Uint8Array} recipientSecretKey - 接收方的私钥(Ed25519原始格式)
- * @returns {string|null} 解密后的消息，失败返回null
- */
 export function decryptMessage(encryptedMessageBase64, senderPublicKey, recipientSecretKey) {
   try {
     const fullMessage = b64_decode(encryptedMessageBase64);
@@ -66,7 +43,6 @@ export function decryptMessage(encryptedMessageBase64, senderPublicKey, recipien
     const nonce = fullMessage.slice(0, 24);
     const encryptedMessage = fullMessage.slice(24);
 
-    // 转换密钥 Ed25519 -> Curve25519
     const recipientEncryptSecret = ed2curve.convertSecretKey(recipientSecretKey);
     const senderEncryptPublic = ed2curve.convertPublicKey(senderPublicKey);
 
@@ -87,17 +63,11 @@ export function decryptMessage(encryptedMessageBase64, senderPublicKey, recipien
 
     return new TextDecoder().decode(decryptedBytes);
   } catch (error) {
-    // console.error('解密失败:', error);
     return null;
   }
 }
 
-/**
- * 生成消息标签 (Tag)
- * 使用密钥的部分作为标签,用于过滤
- * @param {Uint8Array} publicKey - 公钥
- * @returns {string} 标签 (前8个字节的hex表示)
- */
+// 公钥前8字节做标签，用于快速过滤
 export function generateTag(publicKey) {
   const tagBytes = publicKey.slice(0, 8);
   return Array.from(tagBytes)
@@ -105,29 +75,17 @@ export function generateTag(publicKey) {
     .join('');
 }
 
-/**
- * 验证消息标签
- * @param {string} tag - 消息携带的标签
- * @param {Uint8Array} publicKey - 用于验证的公钥
- * @returns {boolean} 标签是否匹配
- */
 export function verifyTag(tag, publicKey) {
   return tag === generateTag(publicKey);
 }
 
-/**
- * 对称加密 (用于群组消息)
- * @param {string} message - 消息内容
- * @param {Uint8Array} sharedKey - 共享密钥 (32字节)
- * @returns {string} Base64编码的加密消息
- */
+// 群组用对称加密，格式也是nonce+密文
 export function symmetricEncrypt(message, sharedKey) {
   const messageBytes = new TextEncoder().encode(message);
   const nonce = nacl.randomBytes(24);
 
   const encrypted = nacl.secretbox(messageBytes, nonce, sharedKey);
 
-  // send-message = nonce + cipher
   const fullMessage = new Uint8Array(nonce.length + encrypted.length);
   fullMessage.set(nonce);
   fullMessage.set(encrypted, nonce.length);
@@ -135,12 +93,6 @@ export function symmetricEncrypt(message, sharedKey) {
   return b64_encode(fullMessage);
 }
 
-/**
- * 对称解密 (用于群组消息)
- * @param {string} encryptedMessage - Base64编码的加密消息
- * @param {Uint8Array} sharedKey - 共享密钥 (32字节)
- * @returns {string|null} 解密后的消息
- */
 export function symmetricDecrypt(encryptedMessage, sharedKey) {
   try {
     const fullMessage = b64_decode(encryptedMessage);
@@ -155,47 +107,28 @@ export function symmetricDecrypt(encryptedMessage, sharedKey) {
 
     return new TextDecoder().decode(decrypted);
   } catch (error) {
-    // console.error('对称解密失败:', error.message);
     return null;
   }
 }
 
-/**
- * 从用户名和密码派生存储密钥 (AES-256)
- * @param {string} username
- * @param {string} password
- * @returns {Buffer} 32字节密钥
- */
+// 本地存储密钥派生，pbkdf2同步版本，10万次迭代
 export function deriveStorageKey(username, password) {
   const salt = hashData(username);
-  // 使用 pbkdf2 同步版本
   return crypto.pbkdf2Sync(password, salt, 100000, 32, 'sha512');
 }
 
-/**
- * 使用 AES-256-GCM 加密数据 (用于本地存储)
- * @param {string} text
- * @param {Buffer} key
- * @returns {string} base64 encoded (iv:authTag:encrypted)
- */
+// GCM模式，12字节IV，格式iv:authTag:encrypted
 export function encryptStorageData(text, key) {
-  const iv = crypto.randomBytes(12); // GCM standard IV size
+  const iv = crypto.randomBytes(12);
   const cipher = crypto.createCipheriv('aes-256-gcm', key, iv);
   
   let encrypted = cipher.update(text, 'utf8', 'base64');
   encrypted += cipher.final('base64');
   const authTag = cipher.getAuthTag();
 
-  // Format: iv:authTag:encrypted
   return `${iv.toString('base64')}:${authTag.toString('base64')}:${encrypted}`;
 }
 
-/**
- * 使用 AES-256-GCM 解密数据 (用于本地存储)
- * @param {string} encryptedData
- * @param {Buffer} key
- * @returns {string|null} decrypted text
- */
 export function decryptStorageData(encryptedData, key) {
   try {
     const parts = encryptedData.split(':');
@@ -212,7 +145,6 @@ export function decryptStorageData(encryptedData, key) {
     decrypted += decipher.final('utf8');
     return decrypted;
   } catch (e) {
-    // console.error('Storage decryption failed:', e.message);
     return null;
   }
 }

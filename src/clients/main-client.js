@@ -1,13 +1,9 @@
-/**
- * 统一客户端入口 - 支持登录、注册和多设备管理
- */
-
 import '../polyfill.js';
 import HyperswarmNode from '../network/hyperswarmNode.js';
 import { generateKeyPairFromCredentials, signMessage, verifySignature } from '../crypto/identity.js';
 import { symmetricEncrypt, symmetricDecrypt, encryptMessage, decryptMessage } from '../crypto/encryption.js';
 import { createInviteCode, formatInviteCode, parseInviteCode, unformatInviteCode } from '../utils/communication/inviteCode.js';
-import { promptLogin, showLoginSuccess, promptSelection, promptRegister } from '../utils/communication/login.js';
+import { promptLogin, showLoginSuccess } from '../utils/communication/login.js';
 import { checkRegistrationLimits, recordRegistration, initRegistry, saveRegistryToDisk } from '../data/host_registry.js';
 import { initStorage, cacheMessage, flushCache, loadHistory } from '../data/msg_storage.js';
 import { performPoW } from '../utils/security/pow.js';
@@ -35,14 +31,10 @@ console.log(`
 ╚═══════════════════════════════════════════════════════════╝
 `);
 
-// 从命令行参数获取邀请码
 const args = process.argv.slice(2);
 const inviteArg = args.find(arg => arg.startsWith('--invite='));
 const inviteCodeFromCLI = inviteArg ? inviteArg.split('=')[1] : null;
 
-/**
- * 加载本地用户数据
- */
 function loadLocalUser(username) {
   try {
     if (!fs.existsSync(USER_DATA_DIR)) {
@@ -59,9 +51,6 @@ function loadLocalUser(username) {
   }
 }
 
-/**
- * 保存本地用户数据
- */
 function saveLocalUser(userData) {
   try {
     if (!fs.existsSync(USER_DATA_DIR)) {
@@ -69,7 +58,6 @@ function saveLocalUser(userData) {
     }
     const filePath = path.join(USER_DATA_DIR, `${userData.username}.json`);
 
-    // 保留现有数据
     let existingData = {};
     if (fs.existsSync(filePath)) {
       try {
@@ -91,95 +79,75 @@ function saveLocalUser(userData) {
 }
 
 async function attemptLogin() {
-  // 1. 选择模式
-  const mode = await promptSelection();
-  let credentials;
+  console.log('\n🔐 用户登录/注册');
+  const credentials = await promptLogin();
+  
+  const localUser = loadLocalUser(credentials.username);
+  let isNewUser = false;
 
-  if (mode === 'register') {
-    console.log('\n📝 新用户注册');
-    
-    // 检查注册限制 (Host Registry)
+  if (localUser) {
+    if (localUser.passwordHash !== credentials.passwordHash) {
+      console.log(`\n❌ 登录失败: 密码错误！`);
+      throw { code: 'WRONG_PASSWORD' };
+    }
+  } else {
+    isNewUser = true;
+    console.log(`\n📝 检测到新用户 "${credentials.username}"，正在注册...`);
+
     const limitCheck = checkRegistrationLimits();
     if (!limitCheck.allowed) {
       console.log(`\n❌ 注册被拒绝: ${limitCheck.reason}`);
       throw { code: 'REGISTRATION_LIMIT' };
     }
 
-    // 执行 PoW
-    await performPoW();
+    // 密码要求：8位以上，大小写+数字+下划线
+    const pwdRegex = /^(?=.*[a-z])(?=.*[A-Z])(?=.*\d)(?=.*_)[A-Za-z\d_]{8,}$/;
+    if (!pwdRegex.test(credentials.password)) {
+       console.log('❌ 密码不符合安全要求');
+       console.log('   要求：至少8位，包含大写字母、小写字母、数字和下划线');
+       throw { code: 'WRONG_PASSWORD' };
+    }
 
-    credentials = await promptRegister();
-    
-    // 检查用户是否已存在
-    const localUser = loadLocalUser(credentials.username);
-    if (localUser) {
-      console.log(`\n❌ 注册失败: 用户名 "${credentials.username}" 已存在！`);
-      console.log('   请直接登录或使用其他用户名。');
-      throw { code: 'WRONG_PASSWORD' }; // 触发重试
-    }
-  } else {
-    console.log('\n🔐 用户登录');
-    credentials = await promptLogin();
-    
-    // 检查用户是否存在
-    const localUser = loadLocalUser(credentials.username);
-    if (!localUser) {
-      console.log(`\n❌ 登录失败: 用户 "${credentials.username}" 不存在！`);
-      console.log('   请先注册。');
-      throw { code: 'WRONG_PASSWORD' }; // 触发重试
-    }
+    await performPoW();
   }
 
-  // 生成身份密钥（不显示登录成功，等确认无冲突后再显示）
+  // 等冲突检测完再显示登录成功
   console.log('🔐 正在生成身份密钥...');
   const userKeys = await generateKeyPairFromCredentials(credentials.username, credentials.password);
 
-  // 初始化本地存储加密
   initStorage(credentials.username, credentials.password);
 
-  // 保存用户数据
   saveLocalUser({
     username: credentials.username,
-    passwordHash: crypto.createHash('sha256').update(credentials.password).digest('hex'),
+    passwordHash: credentials.passwordHash,
     publicKey: userKeys.publicKey
   });
 
-  // 如果是新注册，记录到注册表
-  if (mode === 'register') {
+  if (isNewUser) {
     recordRegistration(credentials.username);
   }
 
-  // 创建 P2P 节点
   console.log('🌐 正在创建 P2P 节点...');
   const node = new HyperswarmNode();
 
-  // 群组信息
   let currentGroup = null;
 
-  // P2P 用户注册表主题
   const USER_REGISTRY_TOPIC = 'user-registry-global';
-  const onlineUsers = new Map(); // username -> { publicKey, peerId, timestamp, sessionId }
+  const onlineUsers = new Map();
 
-  // 会话信息
   const sessionId = crypto.randomBytes(8).toString('hex');
-  const loginTimestamp = Date.now(); // 记录登录时间戳
-  let hasAlertedConflict = false; // 单次警告标志
-  let shouldExit = false; // 是否需要退出标志
+  const loginTimestamp = Date.now();
+  let hasAlertedConflict = false;
+  let shouldExit = false;
 
-  // 创建一个用于处理登录冲突的 Promise
   const { promise: conflictPromise, reject: rejectLogin } = Promise.withResolvers();
   let conflictHandled = false;
 
-  // 定期广播定时器（稍后初始化）
   let broadcastInterval = null;
-  // 定期刷新缓存定时器
   let flushInterval = null;
 
-  // 清理函数（需要在使用前定义）
   const cleanup = async () => {
-    // 保存注册表数据
     saveRegistryToDisk();
-    // 保存消息缓存
     flushCache(credentials.username);
 
     if (broadcastInterval) {
@@ -209,27 +177,23 @@ async function attemptLogin() {
       if (data.type === 'user_login') {
         const { username, publicKey, sessionId: remoteSessionId, timestamp: remoteTimestamp } = data;
 
-        // 检测同用户名登录
+        // 同用户名登录冲突检测
         if (username === credentials.username && remoteSessionId !== sessionId) {
           console.log(`\n⚠️  检测到用户 "${username}" 在其他设备登录！`);
           console.log(`   时间: ${new Date(remoteTimestamp).toLocaleString()}`);
           console.log(`   会话ID: ${remoteSessionId}`);
 
-          // 验证密钥是否匹配（同一密码会生成相同密钥）
+          // 公钥相同说明密码相同，用时间戳判断先后
           if (publicKey === userKeys.publicKey) {
-            // 密码相同 - 通过时间戳判断谁先登录
             if (!hasAlertedConflict && !conflictHandled) {
-              // 比较登录时间：对方先登录（时间戳更小）= 我后登录，我应该退出
+              // 对方先登录则我退出
               if (remoteTimestamp < loginTimestamp) {
-                // 对方先登录，我是新登录的，我应该退出
                 console.log(`\n⚠️  该账户已登录`);
                 console.log(`   提示: 该账号正在其他设备使用中`);
 
-                // 标记已处理
                 hasAlertedConflict = true;
                 conflictHandled = true;
 
-                // 发送警告给对方（老用户）
                 await node.publish(USER_REGISTRY_TOPIC, JSON.stringify({
                   type: 'login_alert',
                   username,
@@ -237,7 +201,6 @@ async function attemptLogin() {
                   timestamp: Date.now()
                 }), 'system', true);
 
-                // 标记需要退出并重新登录
                 shouldExit = true;
                 console.log(`\n⏳ 3秒后返回登录界面...`);
                 setTimeout(async () => {
@@ -246,22 +209,17 @@ async function attemptLogin() {
                   error.code = 'WRONG_PASSWORD';
                   rejectLogin(error);
                 }, 3000);
-              } else {
-                // 我先登录，对方后登录，我保持在线，不做任何操作
-                // 对方会自动退出
               }
             }
           } else {
-            // 密钥不同 - 该用户已存在（密码错误）
+            // 公钥不同说明密码错误，用户名已被占用
             if (!hasAlertedConflict && !conflictHandled) {
               console.log(`\n❌ 该用户已存在`);
               console.log(`   提示: 该用户名已被其他人使用`);
 
-              // 标记已处理（不发送警告给老用户）
               hasAlertedConflict = true;
               conflictHandled = true;
 
-              // 标记需要退出并重新登录
               shouldExit = true;
               console.log(`\n⏳ 3秒后返回登录界面...`);
               setTimeout(async () => {
@@ -274,9 +232,7 @@ async function attemptLogin() {
           }
         }
 
-        // 更新在线用户列表（不包括自己）
         if (username !== credentials.username) {
-          // 只在首次发现时打印
           const isNewUser = !onlineUsers.has(username);
           onlineUsers.set(username, {
             publicKey,
@@ -287,7 +243,7 @@ async function attemptLogin() {
             console.log(`\n👤 发现在线用户: ${username}`);
           }
 
-          // 如果已在群组中，自动将该用户加入 currentGroup.members
+          // 自动加入群组成员列表
           if (currentGroup && currentGroup.type === 'group') {
             currentGroup.members = currentGroup.members || [];
             if (!currentGroup.members.includes(username)) {
@@ -298,7 +254,6 @@ async function attemptLogin() {
       }
 
       if (data.type === 'user_list_request') {
-        // 有人请求用户列表，回复自己的信息（静默模式）
         await node.publish(USER_REGISTRY_TOPIC, JSON.stringify({
           type: 'user_login',
           username: credentials.username,
@@ -324,14 +279,12 @@ async function attemptLogin() {
           onlineUsers.delete(username);
           console.log(`\n👋 用户下线: ${username}`);
 
-          // 如果该用户属于当前群组成员，移除并发布轮换选举消息
+          // 成员离开时触发密钥轮换选举
           if (currentGroup && currentGroup.type === 'group' && currentGroup.members && currentGroup.members.includes(username)) {
-            // 从成员列表移除
             currentGroup.members = currentGroup.members.filter(m => m !== username);
 
             console.log(`\n🔐 群组成员 ${username} 离开，发布轮换选举...`);
 
-            // 发布 rotate_election 到群组主题，签名 payload
             try {
               const payloadObj = {
                 leavingUser: username,
@@ -359,32 +312,27 @@ async function attemptLogin() {
     }
   });
 
-  // 等待 P2P 连接建立（重要！）
   console.log(`⏳ 等待 P2P 网络连接建立...`);
 
-  // 使用 Promise.race 来同时等待网络建立和冲突检测
+  // 同时等网络建立和冲突检测
   try {
     await Promise.race([
       new Promise(resolve => setTimeout(resolve, 5000)),
-      conflictPromise  // 如果检测到冲突，这个 promise 会被 reject
+      conflictPromise
     ]);
   } catch (error) {
-    // 如果是密码错误，重新抛出以便外层捕获
     if (error.code === 'WRONG_PASSWORD') {
       throw error;
     }
     throw error;
   }
 
-  // 如果在等待期间检测到需要退出，直接返回
   if (shouldExit) {
     return;
   }
 
-  // 等待期结束，没有冲突，显示登录成功
   showLoginSuccess(credentials.username, userKeys.publicKey);
 
-  // 发送登录广播
   console.log(`📢 广播用户登录...`);
   await node.publish(USER_REGISTRY_TOPIC, JSON.stringify({
     type: 'user_login',
@@ -394,14 +342,13 @@ async function attemptLogin() {
     timestamp: Date.now()
   }));
 
-  // 请求其他在线用户列表
   await node.publish(USER_REGISTRY_TOPIC, JSON.stringify({
     type: 'user_list_request',
     from: credentials.username,
     timestamp: Date.now()
   }));
 
-  // 定期重新广播（确保新加入的节点能发现）
+  // 每30秒广播一次，让新节点能发现
   broadcastInterval = setInterval(async () => {
     await node.publish(USER_REGISTRY_TOPIC, JSON.stringify({
       type: 'user_login',
@@ -409,10 +356,9 @@ async function attemptLogin() {
       publicKey: userKeys.publicKey,
       sessionId,
       timestamp: Date.now()
-    }), 'system', true); // 静默模式，不输出日志
-  }, 30000); // 每30秒广播一次
+    }), 'system', true);
+  }, 30000);
 
-  // 定期刷新缓存 (每5分钟)
   flushInterval = setInterval(() => {
     flushCache(credentials.username);
   }, 5 * 60 * 1000);
@@ -440,15 +386,14 @@ async function attemptLogin() {
     prompt: `${credentials.username}> `
   });
 
-  // 消息处理函数
-  // 自动/按成员分发的密钥轮换函数
+  // 按成员分发新密钥，每个成员用非对称加密
   async function performGroupKeyRotation(initiatorUsername) {
     if (!currentGroup || currentGroup.type !== 'group') return;
 
     const newKey = crypto.randomBytes(32);
     const newKeyBase64 = naclUtil.encodeBase64(newKey);
 
-    // 只向当前在线且属于群组的成员分发（包括自己）
+    // 只给在线成员分发
     const members = (currentGroup.members || []).filter(m => m === credentials.username || onlineUsers.has(m));
 
     const boxes = [];
@@ -463,11 +408,11 @@ async function attemptLogin() {
           recipientPubBase64 = u.publicKey;
         }
         const recipientPubRaw = naclUtil.decodeBase64(recipientPubBase64);
-        // 使用发起者的私钥对每个接收方加密 newKeyBase64
+        // 用发起者私钥加密，只有对应接收者能解密
         const box = encryptMessage(newKeyBase64, recipientPubRaw, userKeys.secretKeyRaw);
         boxes.push({ recipient: member, box });
       } catch (e) {
-        // 忽略单个成员的失败
+        // 忽略单个成员失败
       }
     }
 
@@ -486,7 +431,6 @@ async function attemptLogin() {
       timestamp: Date.now()
     }));
 
-    // 本地更新为新密钥并记录轮换时间
     currentGroup.key = newKey;
     currentGroup.lastRotationAt = Date.now();
     console.log(`\n🔄 已分发并更新本地群组密钥（发起者: ${initiatorUsername}）`);
@@ -497,12 +441,10 @@ async function attemptLogin() {
       try {
         const data = JSON.parse(msg.data);
         
-        // 防重放检查 (群组和私聊均有效)
         if (currentGroup && currentGroup.replayProtection && currentGroup.replayProtection.isReplay(data.sender, data.content, data.timestamp)) {
           return; 
         }
 
-        // 处理私聊消息
         if (currentGroup && currentGroup.type === 'dm') {
              if (data.sender === credentials.username) return;
              
@@ -511,14 +453,13 @@ async function attemptLogin() {
                  const timestamp = new Date(data.timestamp).toLocaleTimeString();
                  console.log(`\n💬 [${timestamp}] ${data.sender} (私密): ${decrypted}`);
                  
-                 // 缓存接收到的消息
                  cacheMessage(credentials.username, {
                     type: 'direct_message',
                     content: decrypted,
                     timestamp: data.timestamp,
-                    senderPublicKey: naclUtil.encodeBase64(currentGroup.peerPublicKey), // 对方发来的，sender是对方
+                    senderPublicKey: naclUtil.encodeBase64(currentGroup.peerPublicKey),
                     senderName: data.sender,
-                    peerPublicKey: naclUtil.encodeBase64(currentGroup.peerPublicKey),   // 对话对象是对方
+                    peerPublicKey: naclUtil.encodeBase64(currentGroup.peerPublicKey),
                     isEncrypted: false
                  });
 
@@ -527,22 +468,17 @@ async function attemptLogin() {
              return;
         }
 
-        // 处理密钥轮换
+        // 密钥轮换：支持per-recipient和向后兼容的广播方式
         if (data.type === 'key_rotation') {
            const senderUser = onlineUsers.get(data.sender);
            if (!senderUser) {
-              //  console.log(`\n⚠️  收到密钥轮换请求，但发送者 "${data.sender}" 未知 (无法验证签名)`);
                return;
            }
            const senderKeyRaw = naclUtil.decodeBase64(senderUser.publicKey);
            if (!verifySignature(data.content, data.signature, senderKeyRaw)) {
-              //  console.log(`\n⚠️  收到密钥轮换请求，但签名无效！可能存在篡改。`);
                return;
            }
 
-           // 支持两种轮换格式：
-           // 1) 广播对称加密的 newKeyBase64（向后兼容）
-           // 2) per-recipient 格式：{ mode: 'per-recipient', boxes: [{recipient, box}, ...] }
            let parsed = null;
            try {
              parsed = JSON.parse(data.content);
@@ -551,48 +487,37 @@ async function attemptLogin() {
            }
 
            if (parsed && parsed.boxes && Array.isArray(parsed.boxes)) {
-             // 查找是否有给自己的封装
+             // per-recipient格式，找自己的box
              const myEntry = parsed.boxes.find(b => b.recipient === credentials.username);
              if (!myEntry) {
-               // 如果没有，说明轮换并未发给我（可能为离群者）
-              //  console.log(`\n🔕 收到密钥轮换，但未包含本设备的密钥份`);
                return;
              }
              const box = myEntry.box;
-             // 使用发起者的公钥和本设备私钥解密
              const newKeyBase64 = decryptMessage(box, senderKeyRaw, userKeys.secretKeyRaw);
              if (newKeyBase64) {
                const newKey = naclUtil.decodeBase64(newKeyBase64);
                currentGroup.key = newKey;
-              //  console.log(`\n🔄 群组密钥已由 ${data.sender} 更新（按成员封装）`);
-             } else {
-              //  console.log(`\n⚠️ 无法解密分发给本设备的新密钥`);
              }
              return;
            }
 
-           // 向后兼容：尝试对称解密（原有广播方式）
+           // 向后兼容：对称解密
            const newKeyBase64 = symmetricDecrypt(data.content, currentGroup.key);
            if (newKeyBase64) {
                const newKey = naclUtil.decodeBase64(newKeyBase64);
                currentGroup.key = newKey;
-              //  console.log(`\n🔄 群组密钥已由 ${data.sender} 更新（广播解密）`);
            }
            return;
         }
-        // 处理轮换选举（rotate_election）
-        // 竞争机制，决定谁有轮换密钥的权力
+        // 轮换选举：优先创建者，否则最近活跃发送者
         if (data.type === 'rotate_election') {
            const senderUser = onlineUsers.get(data.sender);
            if (!senderUser) {
-            //  console.log(`\n⚠️  收到轮换选举，但发送者 ${data.sender} 未知，忽略`);
              return;
            }
 
            const senderKeyRaw = naclUtil.decodeBase64(senderUser.publicKey);
-           // 验证签名
            if (!verifySignature(data.content, data.signature, senderKeyRaw)) {
-            //  console.log(`\n⚠️  收到轮换选举，但签名无效，忽略`);
              return;
            }
 
@@ -600,42 +525,34 @@ async function attemptLogin() {
            try {
              payload = JSON.parse(data.content);
            } catch (e) {
-            //  console.log(`\n⚠️  轮换选举内容解析失败`);
              return;
            }
 
-           // 决定谁来发起轮换：优先创建者（creator），若创建者在线则由创建者发起；否则由最近活跃发送者发起
            const creator = currentGroup && currentGroup.creator ? currentGroup.creator : null;
            const preferred = (creator && onlineUsers.has(creator)) ? creator : (payload.lastActiveSender || (currentGroup && currentGroup.lastActiveSender));
 
            if (!preferred) {
-             // 无合适发起者，忽略
              return;
            }
 
            if (preferred === credentials.username) {
-             // 避免重复轮换：如果上次轮换在短时间内发生，忽略
+             // 5秒内不重复轮换
              const now = Date.now();
              currentGroup.lastRotationAt = currentGroup.lastRotationAt || 0;
              if (now - currentGroup.lastRotationAt < 5000) {
-               // 如果 5 秒内已经轮换过，忽略重复
                return;
              }
 
-            //  console.log(`\n🗳️ 本设备被选为轮换发起者（来源: ${data.sender}），开始执行轮换`);
              try {
                await performGroupKeyRotation(credentials.username);
                currentGroup.lastRotationAt = Date.now();
              } catch (e) {
                console.error('执行轮换失败:', e);
              }
-           } else {
-             // 不是本设备发起，忽略
            }
            return;
         }
 
-        // 验证普通消息签名
         let sigStatus = undefined;
         if (data.signature) {
            const senderUser = onlineUsers.get(data.sender);
@@ -654,7 +571,6 @@ async function attemptLogin() {
         if (decrypted && data.sender !== credentials.username) {
           const timestamp = new Date(data.timestamp).toLocaleTimeString();
           console.log(`\n💬 [${timestamp}] ${data.sender} ${sigStatus}: ${decrypted}`);
-          // 更新最近活跃发送者
           if (currentGroup && currentGroup.type === 'group') {
             currentGroup.lastActiveSender = data.sender;
           }
@@ -684,7 +600,6 @@ async function attemptLogin() {
 
       const topic = `group-${invite.groupId}`;
       
-      // 初始化防重放保护 (每个群组一个实例)
       const replayProtection = new ReplayProtection();
 
       currentGroup = {
@@ -697,9 +612,7 @@ async function attemptLogin() {
         replayProtection: replayProtection
       };
 
-      // 初始化成员列表（包括自己和当前已知在线用户）
       currentGroup.members = [credentials.username, ...Array.from(onlineUsers.keys())].filter((v, i, a) => a.indexOf(v) === i);
-      // 标记创建者
       currentGroup.creator = invite.creator;
       currentGroup.lastRotationAt = 0;
       currentGroup.lastActiveSender = invite.creator || credentials.username;
@@ -747,7 +660,6 @@ async function attemptLogin() {
             const inviteCode = createInviteCode(groupId, sharedKey, groupName, credentials.username);
             const formatted = formatInviteCode(inviteCode);
             
-            // 初始化防重放保护
             const replayProtection = new ReplayProtection();
 
             currentGroup = {
@@ -760,9 +672,7 @@ async function attemptLogin() {
               replayProtection: replayProtection
             };
 
-            // 初始化成员列表（包括自己和当前已知在线用户）
             currentGroup.members = [credentials.username, ...Array.from(onlineUsers.keys())].filter((v, i, a) => a.indexOf(v) === i);
-            // 标记创建者
             currentGroup.creator = credentials.username;
             currentGroup.lastRotationAt = 0;
             currentGroup.lastActiveSender = credentials.username;
@@ -811,17 +721,16 @@ async function attemptLogin() {
                break;
             }
 
+            // 用户名排序确保topic唯一
             const sortedUsers = [credentials.username, targetUser].sort();
             const dmTopic = `dm-${sortedUsers.join('-')}`;
             
-            // 发送信号
             await node.publish(USER_REGISTRY_TOPIC, JSON.stringify({
                 type: 'dm_signal',
                 target: targetUser,
                 sender: credentials.username
             }));
 
-            // 初始化防重放保护
             const replayProtection = new ReplayProtection();
 
             currentGroup = {
@@ -836,7 +745,6 @@ async function attemptLogin() {
 
             console.log(`\n💬 正在进入与 ${targetUser} 的私聊频道...`);
             
-            // 加载历史记录
             const history = loadHistory(credentials.username, naclUtil.encodeBase64(currentGroup.peerPublicKey), 'direct');
             if (history.length > 0) {
                 console.log(`\n📜 --- 历史记录 ---`);
@@ -990,7 +898,6 @@ async function attemptLogin() {
                 timestamp: Date.now()
               })
             );
-            // 标记为最近活跃发送者
             currentGroup.lastActiveSender = credentials.username;
             console.log(`✓ 已发送（加密+签名）`);
         }
@@ -1007,12 +914,9 @@ async function attemptLogin() {
   });
 }
 
-// 主函数：包装 attemptLogin 并实现重试循环
 async function main() {
-  // 初始化注册表
   initRegistry();
 
-  // 监听退出信号，保存注册表
   process.on('SIGINT', () => {
     console.log('\n[System] 正在保存数据并退出...');
     saveRegistryToDisk();
@@ -1022,18 +926,14 @@ async function main() {
   while (true) {
     try {
       await attemptLogin();
-      // 如果登录成功，跳出循环
       break;
     } catch (error) {
       if (error.code === 'WRONG_PASSWORD') {
-        // 密码错误，重新开始登录流程
         console.log('\n');
         continue;
       } else if (error.code === 'REGISTRATION_LIMIT') {
-        // 达到注册限制，退出
         process.exit(1);
       } else {
-        // 其他错误，退出程序
         console.error('❌ 错误:', error);
         process.exit(1);
       }
