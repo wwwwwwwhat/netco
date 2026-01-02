@@ -16,7 +16,7 @@ export function initStorage(username, password) {
   storageKeys[username] = deriveStorageKey(username, password);
 }
 
-// 用senderPublicKey+timestamp+content生成唯一ID
+// 公钥+时间戳+内容生成唯一ID
 export function cacheMessage(username, messageData) {
   if (!memoryCache[username]) {
     memoryCache[username] = {};
@@ -36,7 +36,7 @@ export function cacheMessage(username, messageData) {
   };
 }
 
-// 写入磁盘前加密，清理3天前的消息
+// 存盘前加密 清理3天前
 export function flushCache(username = null) {
   try {
     if (!fs.existsSync(CACHE_DIR)) {
@@ -65,7 +65,7 @@ export function flushCache(username = null) {
 
       for (const [msgId, msgData] of Object.entries(newMessages)) {
         const msgToSave = { ...msgData };
-        // 只加密明文，已加密的不重复加密
+        // 明文才加密 已加密不重复
         if (key && msgToSave.content && !msgToSave.isEncrypted) {
           msgToSave.content = encryptStorageData(msgToSave.content, key);
           msgToSave.isEncrypted = true;
@@ -73,7 +73,7 @@ export function flushCache(username = null) {
         messages[msgId] = msgToSave;
       }
 
-      // 删除3天前的消息
+      // 3天前删掉
       for (const [msgId, msgData] of Object.entries(messages)) {
         const msgTime = new Date(msgData.timestamp).getTime();
         if (now - msgTime > DAYS_MS) {
@@ -82,17 +82,17 @@ export function flushCache(username = null) {
       }
 
       fs.writeFileSync(filePath, JSON.stringify(messages, null, 2), 'utf8');
-      
+
       if (memoryCache[user]) {
         memoryCache[user] = {};
       }
     }
   } catch (error) {
-    // 忽略错误
+    // 存盘失败不管
   }
 }
 
-// 私聊匹配：peerPublicKey或senderPublicKey等于targetId
+// 私聊匹配 peerPublicKey或senderPublicKey等于targetId
 export function loadHistory(username, targetId, type) {
   try {
     const filePath = path.join(CACHE_DIR, `${username}.json`);

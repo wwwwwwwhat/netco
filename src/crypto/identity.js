@@ -6,7 +6,7 @@ import { hashData } from './digest.js';
 const encode = naclUtil.encodeBase64;
 const decode = naclUtil.decodeBase64;
 
-// scrypt派生密钥，确保相同用户名密码生成相同密钥对
+// scrypt派生 确保同用户名密码生成同密钥对
 export async function generateKeyPairFromCredentials(username, password) {
   const input = `${password}::${username}`;
   const buffer = new TextEncoder().encode(input);
@@ -14,7 +14,7 @@ export async function generateKeyPairFromCredentials(username, password) {
   const usernameDigest = hashData(username);
   const salt = new TextEncoder().encode(usernameDigest);
 
-  // scrypt参数：N=16384, r=8, p=1，32字节输出
+  // scrypt参数 N=16384 r=8 p=1 输出32字节
   const N = 16384;
   const r = 8;
   const p = 1;
@@ -22,7 +22,7 @@ export async function generateKeyPairFromCredentials(username, password) {
 
   const derivedKey = await scrypt.scrypt(buffer, salt, N, r, p, dkLen);
 
-  // 用派生密钥做种子生成Ed25519密钥对
+  // 派生密钥当种子 生成Ed25519
   const keyPair = nacl.sign.keyPair.fromSeed(new Uint8Array(derivedKey));
 
   return {
@@ -51,7 +51,7 @@ export function restoreKeyPair(publicKeyStr, secretKeyStr) {
   };
 }
 
-// detached签名，不包含消息内容
+// detached签名 不包含消息
 export function signMessage(message, secretKey) {
   const messageBytes = new TextEncoder().encode(message);
   const signature = nacl.sign.detached(messageBytes, secretKey);

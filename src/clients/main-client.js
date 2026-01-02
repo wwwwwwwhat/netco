@@ -20,15 +20,10 @@ const __dirname = path.dirname(__filename);
 const USER_DATA_DIR = path.join(__dirname, '../../data/user');
 
 console.log(`
-╔═══════════════════════════════════════════════════════════╗
-║          去中心化安全社交网络 - 客户端                      ║
-║                                                           ║
-║  功能:                                                    ║
-║  - P2P注册                                                ║
-║  - 多设备检测                                              ║
-║  - 群组聊天（邀请码）                                      ║
-║  - 端到端加密                                             ║
-╚═══════════════════════════════════════════════════════════╝
+╔════════════════════════════════════════════╗
+║       P2P聊天客户端                        ║
+║   支持群聊/私聊/多设备检测/E2E加密         ║
+╚════════════════════════════════════════════╝
 `);
 
 const args = process.argv.slice(2);
@@ -81,7 +76,7 @@ function saveLocalUser(userData) {
 async function attemptLogin() {
   console.log('\n登录/注册');
   const credentials = await promptLogin();
-  
+
   const localUser = loadLocalUser(credentials.username);
   let isNewUser = false;
 
@@ -239,7 +234,7 @@ async function attemptLogin() {
             console.log(`\n在线: ${username}`);
           }
 
-          // 自动加入群组成员列表
+          // 新人自动加到群成员
           if (currentGroup && currentGroup.type === 'group') {
             currentGroup.members = currentGroup.members || [];
             if (!currentGroup.members.includes(username)) {
@@ -274,7 +269,7 @@ async function attemptLogin() {
           onlineUsers.delete(username);
           console.log(`\n下线: ${username}`);
 
-          // 成员离开时触发密钥轮换选举
+          // 有人退群要轮换密钥 PFS
           if (currentGroup && currentGroup.type === 'group' && currentGroup.members && currentGroup.members.includes(username)) {
             currentGroup.members = currentGroup.members.filter(m => m !== username);
 
@@ -303,12 +298,12 @@ async function attemptLogin() {
         }
       }
     } catch (error) {
-      // 忽略解析错误
+      // 解析失败不管
     }
   });
 
 
-  // 同时等网络建立和冲突检测
+  // 等网络建立+冲突检测 同时跑
   try {
     await Promise.race([
       new Promise(resolve => setTimeout(resolve, 5000)),
@@ -341,7 +336,7 @@ async function attemptLogin() {
     timestamp: Date.now()
   }));
 
-  // 每30秒广播一次，让新节点能发现
+  // 30秒广播一次 让新节点发现
   broadcastInterval = setInterval(async () => {
     await node.publish(USER_REGISTRY_TOPIC, JSON.stringify({
       type: 'user_login',
@@ -356,28 +351,27 @@ async function attemptLogin() {
     flushCache(credentials.username);
   }, 5 * 60 * 1000);
 
-  console.log(`\n就绪，命令: /create /join /dm /invite /users /stats /exit\n`);
+  console.log(`\n就绪 命令: /create /join /dm /invite /users /stats /exit\n`);
 
-  // 如果通过命令行提供了邀请码，自动加入
+  // 命令行带邀请码自动加群
   if (inviteCodeFromCLI) {
     await joinGroupWithInvite(inviteCodeFromCLI, node, credentials, currentGroup, rl);
   }
 
-  // 创建交互式输入界面
   const rl = readline.createInterface({
     input: process.stdin,
     output: process.stdout,
     prompt: `${credentials.username}> `
   });
 
-  // 按成员分发新密钥，每个成员用非对称加密
+  // 轮换密钥 给每个成员用非对称加密分发
   async function performGroupKeyRotation(initiatorUsername) {
     if (!currentGroup || currentGroup.type !== 'group') return;
 
     const newKey = crypto.randomBytes(32);
     const newKeyBase64 = naclUtil.encodeBase64(newKey);
 
-    // 只给在线成员分发
+    // 只给在线的分发 离线的拿不到
     const members = (currentGroup.members || []).filter(m => m === credentials.username || onlineUsers.has(m));
 
     const boxes = [];
@@ -392,11 +386,11 @@ async function attemptLogin() {
           recipientPubBase64 = u.publicKey;
         }
         const recipientPubRaw = naclUtil.decodeBase64(recipientPubBase64);
-        // 用发起者私钥加密，只有对应接收者能解密
+        // 用我的私钥+对方公钥加密 只有对方能解
         const box = encryptMessage(newKeyBase64, recipientPubRaw, userKeys.secretKeyRaw);
         boxes.push({ recipient: member, box });
       } catch (e) {
-        // 忽略单个成员失败
+        // 单个失败不管 继续
       }
     }
 
@@ -423,19 +417,19 @@ async function attemptLogin() {
     return async (msg) => {
       try {
         const data = JSON.parse(msg.data);
-        
+
         if (currentGroup && currentGroup.replayProtection && currentGroup.replayProtection.isReplay(data.sender, data.content, data.timestamp)) {
-          return; 
+          return;
         }
 
         if (currentGroup && currentGroup.type === 'dm') {
              if (data.sender === credentials.username) return;
-             
+
              const decrypted = decryptMessage(data.content, currentGroup.peerPublicKey, userKeys.secretKeyRaw);
              if (decrypted) {
                  const timestamp = new Date(data.timestamp).toLocaleTimeString();
                  console.log(`\n[${timestamp}] ${data.sender} (私密): ${decrypted}`);
-                 
+
                  cacheMessage(credentials.username, {
                     type: 'direct_message',
                     content: decrypted,
@@ -451,7 +445,7 @@ async function attemptLogin() {
              return;
         }
 
-        // 密钥轮换：支持per-recipient和向后兼容的广播方式
+        // per-recipient模式+兼容旧的广播模式
         if (data.type === 'key_rotation') {
            const senderUser = onlineUsers.get(data.sender);
            if (!senderUser) {
@@ -470,7 +464,7 @@ async function attemptLogin() {
            }
 
            if (parsed && parsed.boxes && Array.isArray(parsed.boxes)) {
-             // per-recipient格式，找自己的box
+             // per-recipient 找自己的box
              const myEntry = parsed.boxes.find(b => b.recipient === credentials.username);
              if (!myEntry) {
                return;
@@ -484,7 +478,7 @@ async function attemptLogin() {
              return;
            }
 
-           // 向后兼容：对称解密
+           // 兼容旧版 对称解密
            const newKeyBase64 = symmetricDecrypt(data.content, currentGroup.key);
            if (newKeyBase64) {
                const newKey = naclUtil.decodeBase64(newKeyBase64);
@@ -492,7 +486,7 @@ async function attemptLogin() {
            }
            return;
         }
-        // 轮换选举：优先创建者，否则最近活跃发送者
+        // 轮换选举 优先创建者 否则最近活跃的
         if (data.type === 'rotate_election') {
            const senderUser = onlineUsers.get(data.sender);
            if (!senderUser) {
@@ -519,7 +513,7 @@ async function attemptLogin() {
            }
 
            if (preferred === credentials.username) {
-             // 5秒内不重复轮换
+             // 5秒内不重复 防抖
              const now = Date.now();
              currentGroup.lastRotationAt = currentGroup.lastRotationAt || 0;
              if (now - currentGroup.lastRotationAt < 5000) {
@@ -560,7 +554,7 @@ async function attemptLogin() {
           rl.prompt();
         }
       } catch (error) {
-        // 忽略
+        // 解析失败忽略
       }
     };
   };
@@ -578,7 +572,7 @@ async function attemptLogin() {
       console.log(`\n邀请码有效，群组: "${invite.groupName}"`);
 
       const topic = `group-${invite.groupId}`;
-      
+
       const replayProtection = new ReplayProtection();
 
       currentGroup = {
@@ -668,17 +662,17 @@ async function attemptLogin() {
                console.log('不能和自己聊');
                break;
             }
-            
+
             const peer = onlineUsers.get(targetUser);
             if (!peer) {
                console.log(`${targetUser} 不在线`);
                break;
             }
 
-            // 用户名排序确保topic唯一
+            // 排序保证topic一致
             const sortedUsers = [credentials.username, targetUser].sort();
             const dmTopic = `dm-${sortedUsers.join('-')}`;
-            
+
             await node.publish(USER_REGISTRY_TOPIC, JSON.stringify({
                 type: 'dm_signal',
                 target: targetUser,
@@ -698,7 +692,7 @@ async function attemptLogin() {
             };
 
             console.log(`\n进入私聊: ${targetUser}`);
-            
+
             const history = loadHistory(credentials.username, naclUtil.encodeBase64(currentGroup.peerPublicKey), 'direct');
             if (history.length > 0) {
                 console.log(`\n历史记录:`);
@@ -785,7 +779,7 @@ async function attemptLogin() {
           break;
 
         default:
-          console.log(`\n未知命令: ${cmd}，输入 /help 查看`);
+          console.log(`\n未知命令: ${cmd} 输入 /help 查看`);
       }
 
     } else if (message) {
@@ -794,7 +788,7 @@ async function attemptLogin() {
       } else {
         if (currentGroup.type === 'dm') {
             const encrypted = encryptMessage(message, currentGroup.peerPublicKey, userKeys.secretKeyRaw);
-            // 统一格式，额外加入签名
+            // 加签名
             const signature = signMessage(encrypted, userKeys.secretKeyRaw);
 
             const timestamp = Date.now();
@@ -806,21 +800,21 @@ async function attemptLogin() {
                 timestamp: timestamp
             }));
 
-             // 缓存发送的消息
+             // 缓存自己发的
              cacheMessage(credentials.username, {
                 type: 'direct_message',
                 content: message,
                 timestamp: timestamp,
-                senderPublicKey: userKeys.publicKey, // 我发的，sender是我
+                senderPublicKey: userKeys.publicKey,
                 senderName: credentials.username,
-                peerPublicKey: naclUtil.encodeBase64(currentGroup.peerPublicKey), // 对话对象是对方
+                peerPublicKey: naclUtil.encodeBase64(currentGroup.peerPublicKey),
                 isEncrypted: false
              });
 
         } else {
             const encrypted = symmetricEncrypt(message, currentGroup.key);
             const signature = signMessage(encrypted, userKeys.secretKeyRaw);
-            
+
             await node.publish(
               currentGroup.topic,
               JSON.stringify({

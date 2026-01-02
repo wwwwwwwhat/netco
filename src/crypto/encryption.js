@@ -7,7 +7,7 @@ import { hashData } from './digest.js';
 const b64_encode = naclUtil.encodeBase64;
 const b64_decode = naclUtil.decodeBase64;
 
-// 非对称加密，Ed25519转Curve25519才能用nacl.box
+// Ed25519转Curve25519 才能box加密
 export function encryptMessage(message, recipientPublicKey, senderSecretKey) {
   const messageBytes = new TextEncoder().encode(message);
   const nonce = nacl.randomBytes(24);
@@ -16,7 +16,7 @@ export function encryptMessage(message, recipientPublicKey, senderSecretKey) {
   const recipientEncryptPublic = ed2curve.convertPublicKey(recipientPublicKey);
 
   if (!senderEncryptSecret || !recipientEncryptPublic) {
-    throw new Error('密钥转换失败: 无效的 Ed25519 密钥');
+    throw new Error('密钥转换失败 Ed25519无效');
   }
 
   const encryptedMessage = nacl.box(
@@ -26,7 +26,7 @@ export function encryptMessage(message, recipientPublicKey, senderSecretKey) {
     senderEncryptSecret
   );
 
-  // nonce放前面，方便解密时提取
+  // nonce放前 解密时提
   const fullMessage = new Uint8Array(nonce.length + encryptedMessage.length);
   fullMessage.set(nonce);
   fullMessage.set(encryptedMessage, nonce.length);
@@ -67,7 +67,7 @@ export function decryptMessage(encryptedMessageBase64, senderPublicKey, recipien
   }
 }
 
-// 公钥前8字节做标签，用于快速过滤
+// 公钥前8字节做tag 快速过滤
 export function generateTag(publicKey) {
   const tagBytes = publicKey.slice(0, 8);
   return Array.from(tagBytes)
@@ -79,7 +79,7 @@ export function verifyTag(tag, publicKey) {
   return tag === generateTag(publicKey);
 }
 
-// 群组用对称加密，格式也是nonce+密文
+// 群聊对称加密 nonce+密文
 export function symmetricEncrypt(message, sharedKey) {
   const messageBytes = new TextEncoder().encode(message);
   const nonce = nacl.randomBytes(24);
@@ -111,17 +111,17 @@ export function symmetricDecrypt(encryptedMessage, sharedKey) {
   }
 }
 
-// 本地存储密钥派生，pbkdf2同步版本，10万次迭代
+// 本地存储密钥派生 pbkdf2 10万次
 export function deriveStorageKey(username, password) {
   const salt = hashData(username);
   return crypto.pbkdf2Sync(password, salt, 100000, 32, 'sha512');
 }
 
-// GCM模式，12字节IV，格式iv:authTag:encrypted
+// GCM模式 12字节IV 格式iv:authTag:密文
 export function encryptStorageData(text, key) {
   const iv = crypto.randomBytes(12);
   const cipher = crypto.createCipheriv('aes-256-gcm', key, iv);
-  
+
   let encrypted = cipher.update(text, 'utf8', 'base64');
   encrypted += cipher.final('base64');
   const authTag = cipher.getAuthTag();

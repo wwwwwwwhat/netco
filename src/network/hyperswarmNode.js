@@ -27,7 +27,7 @@ export class HyperswarmNode {
             });
           }
         } catch (error) {
-          // 忽略解析错误
+          // 解析失败不管
         }
       });
 
@@ -36,12 +36,12 @@ export class HyperswarmNode {
       });
 
       conn.on('error', (err) => {
-        console.error(`连接错误: ${err.message}`);
+        console.error(`连接错: ${err.message}`);
       });
     });
   }
 
-  // 主题名hash成32字节key，等待DHT发现完成
+  // topic名hash成32字节 等DHT发现
   async joinTopic(topic, messageHandler) {
     if (this.topics.has(topic)) {
       return;
@@ -62,13 +62,13 @@ export class HyperswarmNode {
       handler: messageHandler
     });
 
-    console.log(`已加入: ${topic}`);
+    console.log(`加入: ${topic}`);
   }
 
   async leaveTopic(topic) {
     const topicData = this.topics.get(topic);
     if (!topicData) {
-      console.log(`未加入: ${topic}`);
+      console.log(`没加入: ${topic}`);
       return;
     }
 
@@ -77,10 +77,10 @@ export class HyperswarmNode {
     this.topics.delete(topic);
   }
 
-  // 广播到所有连接，不保证送达
+  // 广播到所有连接 不保证送达
   async publish(topic, message, from = 'anonymous', silent = false) {
     if (!this.topics.has(topic)) {
-      console.log(`未加入: ${topic}`);
+      console.log(`没加入: ${topic}`);
       return;
     }
 
