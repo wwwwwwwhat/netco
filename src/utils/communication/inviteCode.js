@@ -1,14 +1,18 @@
 import crypto from 'crypto';
 
 // JSON序列化后base64url编码，7天过期
-export function createInviteCode(groupId, sharedKey, groupName = '', creatorName = '') {
+export function createInviteCode(groupId, sharedKey, groupName = '', creatorName = '', timestamp = Date.now()) {
+  const keyBase64 = Buffer.isBuffer(sharedKey) 
+    ? sharedKey.toString('base64') 
+    : Buffer.from(sharedKey).toString('base64');
+
   const invite = {
     v: 1,
     gid: groupId,
-    key: sharedKey.toString('base64'),
+    key: keyBase64,
     name: groupName,
     creator: creatorName,
-    ts: Date.now()
+    ts: timestamp
   };
 
   const json = JSON.stringify(invite);

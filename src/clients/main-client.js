@@ -1,27 +1,27 @@
-import '../polyfill.js';
-import HyperswarmNode from '../network/hyperswarmNode.js';
-import { generateKeyPairFromCredentials, signMessage, verifySignature } from '../crypto/identity.js';
-import { symmetricEncrypt, symmetricDecrypt, encryptMessage, decryptMessage } from '../crypto/encryption.js';
-import { createInviteCode, formatInviteCode, parseInviteCode, unformatInviteCode } from '../utils/communication/inviteCode.js';
-import { promptLogin, showLoginSuccess } from '../utils/communication/login.js';
-import { checkRegistrationLimits, recordRegistration, initRegistry, saveRegistryToDisk } from '../data/host_registry.js';
-import { initStorage, cacheMessage, flushCache, loadHistory } from '../data/msg_storage.js';
-import { performPoW } from '../utils/security/pow.js';
-import { ReplayProtection } from '../utils/security/replay_protection.js';
-import crypto from 'crypto';
-import * as readline from 'readline';
-import fs from 'fs';
-import path from 'path';
-import { fileURLToPath } from 'url';
-import naclUtil from 'tweetnacl-util';
+import "../polyfill.js";
+import HyperswarmNode from "../network/hyperswarmNode.js";
+import { generateKeyPairFromCredentials, signMessage, verifySignature } from "../crypto/identity.js";
+import { symmetricEncrypt, symmetricDecrypt, encryptMessage, decryptMessage } from "../crypto/encryption.js";
+import { createInviteCode, formatInviteCode, parseInviteCode, unformatInviteCode } from "../utils/communication/inviteCode.js";
+import { promptLogin, showLoginSuccess } from "../utils/communication/login.js";
+import { checkRegistrationLimits, recordRegistration, initRegistry, saveRegistryToDisk } from "../data/host_registry.js";
+import { initStorage, cacheMessage, flushCache, loadHistory } from "../data/msg_storage.js";
+import { performPoW } from "../utils/security/pow.js";
+import { ReplayProtection } from "../utils/security/replay_protection.js";
+import crypto from "crypto";
+import * as readline from "readline";
+import fs from "fs";
+import path from "path";
+import { fileURLToPath } from "url";
+import naclUtil from "tweetnacl-util";
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
-const USER_DATA_DIR = path.join(__dirname, '../../data/user');
+const USER_DATA_DIR = path.join(__dirname, "../../data/user");
 
 const args = process.argv.slice(2);
-const inviteArg = args.find(arg => arg.startsWith('--invite='));
-const inviteCodeFromCLI = inviteArg ? inviteArg.split('=')[1] : null;
+const inviteArg = args.find((arg) => arg.startsWith("--invite="));
+const inviteCodeFromCLI = inviteArg ? inviteArg.split("=")[1] : null;
 
 function loadLocalUser(username) {
   try {
@@ -32,7 +32,7 @@ function loadLocalUser(username) {
     if (!fs.existsSync(filePath)) {
       return null;
     }
-    const fileContent = fs.readFileSync(filePath, 'utf8');
+    const fileContent = fs.readFileSync(filePath, "utf8");
     return JSON.parse(fileContent);
   } catch (error) {
     return null;
@@ -49,7 +49,7 @@ function saveLocalUser(userData) {
     let existingData = {};
     if (fs.existsSync(filePath)) {
       try {
-        const fileContent = fs.readFileSync(filePath, 'utf8');
+        const fileContent = fs.readFileSync(filePath, "utf8");
         existingData = JSON.parse(fileContent);
       } catch (e) {}
     }
@@ -57,26 +57,26 @@ function saveLocalUser(userData) {
     const dataToSave = {
       ...existingData,
       ...userData,
-      lastLogin: new Date().toISOString()
+      lastLogin: new Date().toISOString(),
     };
 
-    fs.writeFileSync(filePath, JSON.stringify(dataToSave, null, 2), 'utf8');
+    fs.writeFileSync(filePath, JSON.stringify(dataToSave, null, 2), "utf8");
   } catch (error) {
-    console.error('保存用户数据失败:', error);
+    console.error("保存用户数据失败:", error);
   }
 }
 
 async function attemptLogin() {
-  console.log('\n登录/注册');
+  console.log("\n登录/注册");
   const credentials = await promptLogin();
-  
+
   const localUser = loadLocalUser(credentials.username);
   let isNewUser = false;
 
   if (localUser) {
     if (localUser.passwordHash !== credentials.passwordHash) {
       console.log(`\n密码错误`);
-      throw { code: 'WRONG_PASSWORD' };
+      throw { code: "WRONG_PASSWORD" };
     }
   } else {
     isNewUser = true;
@@ -85,50 +85,54 @@ async function attemptLogin() {
     const limitCheck = checkRegistrationLimits();
     if (!limitCheck.allowed) {
       console.log(`\n注册被拒: ${limitCheck.reason}`);
-      throw { code: 'REGISTRATION_LIMIT' };
+      throw { code: "REGISTRATION_LIMIT" };
     }
 
     // 密码要求：8位以上，大小写+数字+下划线
     const pwdRegex = /^(?=.*[a-z])(?=.*[A-Z])(?=.*\d)(?=.*_)[A-Za-z\d_]{8,}$/;
     if (!pwdRegex.test(credentials.password)) {
-       console.log('密码不符合要求');
-       console.log('至少8位，大小写+数字+下划线');
-       throw { code: 'WRONG_PASSWORD' };
+      console.log("密码不符合要求");
+      console.log("至少8位，大小写+数字+下划线");
+      throw { code: "WRONG_PASSWORD" };
     }
 
     await performPoW();
   }
 
   // 等冲突检测完再显示登录成功
-  console.log('生成密钥中...');
-  const userKeys = await generateKeyPairFromCredentials(credentials.username, credentials.password);
+  console.log("生成密钥中...");
+  const userKeys = await generateKeyPairFromCredentials(
+    credentials.username,
+    credentials.password,
+  );
 
   initStorage(credentials.username, credentials.password);
 
   saveLocalUser({
     username: credentials.username,
     passwordHash: credentials.passwordHash,
-    publicKey: userKeys.publicKey
+    publicKey: userKeys.publicKey,
   });
 
   if (isNewUser) {
     recordRegistration(credentials.username);
   }
 
-  console.log('创建P2P节点中...');
+  console.log("创建P2P节点中...");
   const node = new HyperswarmNode();
 
   let currentGroup = null;
 
-  const USER_REGISTRY_TOPIC = 'user-registry-global';
+  const USER_REGISTRY_TOPIC = "user-registry-global";
   const onlineUsers = new Map();
 
-  const sessionId = crypto.randomBytes(8).toString('hex');
+  const sessionId = crypto.randomBytes(8).toString("hex");
   const loginTimestamp = Date.now();
   let hasAlertedConflict = false;
   let shouldExit = false;
 
-  const { promise: conflictPromise, reject: rejectLogin } = Promise.withResolvers();
+  const { promise: conflictPromise, reject: rejectLogin } =
+    Promise.withResolvers();
   let conflictHandled = false;
 
   let broadcastInterval = null;
@@ -145,12 +149,17 @@ async function attemptLogin() {
       clearInterval(flushInterval);
     }
     try {
-      await node.publish(USER_REGISTRY_TOPIC, JSON.stringify({
-        type: 'user_logout',
-        username: credentials.username,
-        sessionId,
-        timestamp: Date.now()
-      }), 'system', true);
+      await node.publish(
+        USER_REGISTRY_TOPIC,
+        JSON.stringify({
+          type: "user_logout",
+          username: credentials.username,
+          sessionId,
+          timestamp: Date.now(),
+        }),
+        "system",
+        true,
+      );
     } catch (e) {
       // 忽略发送失败
     }
@@ -162,11 +171,19 @@ async function attemptLogin() {
     try {
       const data = JSON.parse(msg.data);
 
-      if (data.type === 'user_login') {
-        const { username, publicKey, sessionId: remoteSessionId, timestamp: remoteTimestamp } = data;
+      if (data.type === "user_login") {
+        const {
+          username,
+          publicKey,
+          sessionId: remoteSessionId,
+          timestamp: remoteTimestamp,
+        } = data;
 
         // 同用户名登录冲突检测
-        if (username === credentials.username && remoteSessionId !== sessionId) {
+        if (
+          username === credentials.username &&
+          remoteSessionId !== sessionId
+        ) {
           console.log(`\n用户 "${username}" 在其他设备登录`);
 
           // 公钥相同说明密码相同，用时间戳判断先后
@@ -179,19 +196,24 @@ async function attemptLogin() {
                 hasAlertedConflict = true;
                 conflictHandled = true;
 
-                await node.publish(USER_REGISTRY_TOPIC, JSON.stringify({
-                  type: 'login_alert',
-                  username,
-                  message: '您的账号尝试在另一终端登录，密码可能泄露',
-                  timestamp: Date.now()
-                }), 'system', true);
+                await node.publish(
+                  USER_REGISTRY_TOPIC,
+                  JSON.stringify({
+                    type: "login_alert",
+                    username,
+                    message: "您的账号尝试在另一终端登录，密码可能泄露",
+                    timestamp: Date.now(),
+                  }),
+                  "system",
+                  true,
+                );
 
                 shouldExit = true;
                 console.log(`\n3秒后返回登录...`);
                 setTimeout(async () => {
                   await cleanup();
-                  const error = new Error('该账户已登录');
-                  error.code = 'WRONG_PASSWORD';
+                  const error = new Error("该账户已登录");
+                  error.code = "WRONG_PASSWORD";
                   rejectLogin(error);
                 }, 3000);
               }
@@ -208,8 +230,8 @@ async function attemptLogin() {
               console.log(`\n3秒后返回登录...`);
               setTimeout(async () => {
                 await cleanup();
-                const error = new Error('该用户已存在');
-                error.code = 'WRONG_PASSWORD';
+                const error = new Error("该用户已存在");
+                error.code = "WRONG_PASSWORD";
                 rejectLogin(error);
               }, 3000);
             }
@@ -221,14 +243,14 @@ async function attemptLogin() {
           onlineUsers.set(username, {
             publicKey,
             sessionId: remoteSessionId,
-            timestamp: remoteTimestamp
+            timestamp: remoteTimestamp,
           });
           if (isNewUser) {
             console.log(`\n在线: ${username}`);
           }
 
           // 自动加入群组成员列表
-          if (currentGroup && currentGroup.type === 'group') {
+          if (currentGroup && currentGroup.type === "group") {
             currentGroup.members = currentGroup.members || [];
             if (!currentGroup.members.includes(username)) {
               currentGroup.members.push(username);
@@ -237,25 +259,35 @@ async function attemptLogin() {
         }
       }
 
-      if (data.type === 'user_list_request') {
-        await node.publish(USER_REGISTRY_TOPIC, JSON.stringify({
-          type: 'user_login',
-          username: credentials.username,
-          publicKey: userKeys.publicKey,
-          sessionId,
-          timestamp: Date.now()
-        }), 'system', true);
+      if (data.type === "user_list_request") {
+        await node.publish(
+          USER_REGISTRY_TOPIC,
+          JSON.stringify({
+            type: "user_login",
+            username: credentials.username,
+            publicKey: userKeys.publicKey,
+            sessionId,
+            timestamp: Date.now(),
+          }),
+          "system",
+          true,
+        );
       }
 
-      if (data.type === 'dm_signal' && data.target === credentials.username) {
-        console.log(`\n${data.sender} 发来私聊请求，输入 /dm ${data.sender} 开始`);
+      if (data.type === "dm_signal" && data.target === credentials.username) {
+        console.log(
+          `\n${data.sender} 发来私聊请求，输入 /dm ${data.sender} 开始`,
+        );
       }
 
-      if (data.type === 'login_alert' && data.username === credentials.username) {
+      if (
+        data.type === "login_alert" &&
+        data.username === credentials.username
+      ) {
         console.log(`\n警告: ${data.message}`);
       }
 
-      if (data.type === 'user_logout') {
+      if (data.type === "user_logout") {
         const { username, sessionId: remoteSessionId } = data;
         const user = onlineUsers.get(username);
         if (user && user.sessionId === remoteSessionId) {
@@ -263,29 +295,37 @@ async function attemptLogin() {
           console.log(`\n下线: ${username}`);
 
           // 成员离开时触发密钥轮换选举
-          if (currentGroup && currentGroup.type === 'group' && currentGroup.members && currentGroup.members.includes(username)) {
-            currentGroup.members = currentGroup.members.filter(m => m !== username);
-
-            console.log(`\n${username} 离开，触发密钥轮换`);
+          if (
+            currentGroup &&
+            currentGroup.type === "group" &&
+            currentGroup.members &&
+            currentGroup.members.includes(username)
+          ) {
+            currentGroup.members = currentGroup.members.filter(
+              (m) => m !== username,
+            );
 
             try {
               const payloadObj = {
                 leavingUser: username,
                 lastActiveSender: currentGroup.lastActiveSender || null,
-                timestamp: Date.now()
+                timestamp: Date.now(),
               };
               const payload = JSON.stringify(payloadObj);
               const signature = signMessage(payload, userKeys.secretKeyRaw);
 
-              await node.publish(currentGroup.topic, JSON.stringify({
-                type: 'rotate_election',
-                sender: credentials.username,
-                content: payload,
-                signature,
-                timestamp: Date.now()
-              }));
+              await node.publish(
+                currentGroup.topic,
+                JSON.stringify({
+                  type: "rotate_election",
+                  sender: credentials.username,
+                  content: payload,
+                  signature,
+                  timestamp: Date.now(),
+                }),
+              );
             } catch (e) {
-              console.error('发布轮换选举失败:', e);
+              // 忽略
             }
           }
         }
@@ -295,15 +335,14 @@ async function attemptLogin() {
     }
   });
 
-
   // 同时等网络建立和冲突检测
   try {
     await Promise.race([
-      new Promise(resolve => setTimeout(resolve, 5000)),
-      conflictPromise
+      new Promise((resolve) => setTimeout(resolve, 5000)),
+      conflictPromise,
     ]);
   } catch (error) {
-    if (error.code === 'WRONG_PASSWORD') {
+    if (error.code === "WRONG_PASSWORD") {
       throw error;
     }
     throw error;
@@ -315,58 +354,80 @@ async function attemptLogin() {
 
   showLoginSuccess(credentials.username, userKeys.publicKey);
 
-  await node.publish(USER_REGISTRY_TOPIC, JSON.stringify({
-    type: 'user_login',
-    username: credentials.username,
-    publicKey: userKeys.publicKey,
-    sessionId,
-    timestamp: Date.now()
-  }));
-
-  await node.publish(USER_REGISTRY_TOPIC, JSON.stringify({
-    type: 'user_list_request',
-    from: credentials.username,
-    timestamp: Date.now()
-  }));
-
-  // 每30秒广播一次，让新节点能发现
-  broadcastInterval = setInterval(async () => {
-    await node.publish(USER_REGISTRY_TOPIC, JSON.stringify({
-      type: 'user_login',
+  await node.publish(
+    USER_REGISTRY_TOPIC,
+    JSON.stringify({
+      type: "user_login",
       username: credentials.username,
       publicKey: userKeys.publicKey,
       sessionId,
-      timestamp: Date.now()
-    }), 'system', true);
+      timestamp: Date.now(),
+    }),
+  );
+
+  await node.publish(
+    USER_REGISTRY_TOPIC,
+    JSON.stringify({
+      type: "user_list_request",
+      from: credentials.username,
+      timestamp: Date.now(),
+    }),
+  );
+
+  // 每30秒广播一次，让新节点能发现
+  broadcastInterval = setInterval(async () => {
+    await node.publish(
+      USER_REGISTRY_TOPIC,
+      JSON.stringify({
+        type: "user_login",
+        username: credentials.username,
+        publicKey: userKeys.publicKey,
+        sessionId,
+        timestamp: Date.now(),
+      }),
+      "system",
+      true,
+    );
   }, 30000);
 
-  flushInterval = setInterval(() => {
-    flushCache(credentials.username);
-  }, 5 * 60 * 1000);
+  flushInterval = setInterval(
+    () => {
+      flushCache(credentials.username);
+    },
+    5 * 60 * 1000,
+  );
 
   console.log(`\n就绪，命令: /create /join /dm /invite /users /stats /exit\n`);
 
   // 如果通过命令行提供了邀请码，自动加入
   if (inviteCodeFromCLI) {
-    await joinGroupWithInvite(inviteCodeFromCLI, node, credentials, currentGroup, rl);
+    await joinGroupWithInvite(
+      inviteCodeFromCLI,
+      node,
+      credentials,
+      currentGroup,
+      rl,
+    );
   }
 
   // 创建交互式输入界面
   const rl = readline.createInterface({
     input: process.stdin,
     output: process.stdout,
-    prompt: `${credentials.username}> `
+    prompt: `${credentials.username}> `,
   });
 
   // 按成员分发新密钥，每个成员用非对称加密
   async function performGroupKeyRotation(initiatorUsername) {
-    if (!currentGroup || currentGroup.type !== 'group') return;
+    if (!currentGroup || currentGroup.type !== "group") return;
 
     const newKey = crypto.randomBytes(32);
     const newKeyBase64 = naclUtil.encodeBase64(newKey);
 
     // 只给在线成员分发
-    const members = (currentGroup.members || []).filter(m => m === credentials.username || onlineUsers.has(m));
+    const members = (currentGroup.members || []).filter(
+      (m) => m === credentials.username || onlineUsers.has(m),
+    );
 
     const boxes = [];
     for (const member of members) {
@@ -380,169 +441,247 @@ async function attemptLogin() {
           recipientPubBase64 = u.publicKey;
         }
         const recipientPubRaw = naclUtil.decodeBase64(recipientPubBase64);
-        // 用发起者私钥加密，只有对应接收者能解密
-        const box = encryptMessage(newKeyBase64, recipientPubRaw, userKeys.secretKeyRaw);
+        // 用发起者私钥加密
+        const box = encryptMessage(
+          newKeyBase64,
+          recipientPubRaw,
+          userKeys.secretKeyRaw,
+        );
         boxes.push({ recipient: member, box });
       } catch (e) {
-        // 忽略单个成员失败
+        // 忽略
       }
     }
 
     if (boxes.length === 0) {
-      throw new Error('没有可分发的新密钥接收者');
+      throw new Error("没有可分发的新密钥接收者");
     }
 
-    const payload = JSON.stringify({ mode: 'per-recipient', boxes });
+    const payload = JSON.stringify({ mode: "per-recipient", boxes });
     const signature = signMessage(payload, userKeys.secretKeyRaw);
+    const rotationTimestamp = Date.now();
 
-    await node.publish(currentGroup.topic, JSON.stringify({
-      type: 'key_rotation',
-      sender: initiatorUsername,
-      content: payload,
-      signature,
-      timestamp: Date.now()
-    }));
+    await node.publish(
+      currentGroup.topic,
+      JSON.stringify({
+        type: "key_rotation",
+        sender: initiatorUsername,
+        content: payload,
+        signature,
+        timestamp: rotationTimestamp,
+      }),
+    );
 
     currentGroup.key = newKey;
-    currentGroup.lastRotationAt = Date.now();
+    currentGroup.lastRotationAt = rotationTimestamp;
+    
+    // 更新邀请码以包含新密钥
+    const newInviteCode = createInviteCode(
+      currentGroup.id,
+      currentGroup.key,
+      currentGroup.name,
+      currentGroup.creator,
+      rotationTimestamp
+    );
+    currentGroup.inviteCode = newInviteCode;
   }
 
   const createMessageHandler = () => {
     return async (msg) => {
       try {
         const data = JSON.parse(msg.data);
-        
-        if (currentGroup && currentGroup.replayProtection && currentGroup.replayProtection.isReplay(data.sender, data.content, data.timestamp)) {
-          return; 
+
+        if (
+          currentGroup &&
+          currentGroup.replayProtection &&
+          currentGroup.replayProtection.isReplay(
+            data.sender,
+            data.content,
+            data.timestamp,
+          )
+        ) {
+          return;
         }
 
-        if (currentGroup && currentGroup.type === 'dm') {
-             if (data.sender === credentials.username) return;
-             
-             const decrypted = decryptMessage(data.content, currentGroup.peerPublicKey, userKeys.secretKeyRaw);
-             if (decrypted) {
-                 const timestamp = new Date(data.timestamp).toLocaleTimeString();
-                 console.log(`\n[${timestamp}] ${data.sender} (私密): ${decrypted}`);
-                 
-                 cacheMessage(credentials.username, {
-                    type: 'direct_message',
-                    content: decrypted,
-                    timestamp: data.timestamp,
-                    senderPublicKey: naclUtil.encodeBase64(currentGroup.peerPublicKey),
-                    senderName: data.sender,
-                    peerPublicKey: naclUtil.encodeBase64(currentGroup.peerPublicKey),
-                    isEncrypted: false
-                 });
+        if (currentGroup && currentGroup.type === "dm") {
+          if (data.sender === credentials.username) return;
 
-                 rl.prompt();
-             }
-             return;
+          const decrypted = decryptMessage(
+            data.content,
+            currentGroup.peerPublicKey,
+            userKeys.secretKeyRaw,
+          );
+          if (decrypted) {
+            const timestamp = new Date(data.timestamp).toLocaleTimeString();
+            console.log(`\n[${timestamp}] ${data.sender} (私密): ${decrypted}`);
+
+            cacheMessage(credentials.username, {
+              type: "direct_message",
+              content: decrypted,
+              timestamp: data.timestamp,
+              senderPublicKey: naclUtil.encodeBase64(
+                currentGroup.peerPublicKey,
+              ),
+              senderName: data.sender,
+              peerPublicKey: naclUtil.encodeBase64(currentGroup.peerPublicKey),
+              isEncrypted: false,
+            });
+
+            rl.prompt();
+          }
+          return;
         }
 
-        // 密钥轮换：支持per-recipient和向后兼容的广播方式
-        if (data.type === 'key_rotation') {
-           const senderUser = onlineUsers.get(data.sender);
-           if (!senderUser) {
-               return;
-           }
-           const senderKeyRaw = naclUtil.decodeBase64(senderUser.publicKey);
-           if (!verifySignature(data.content, data.signature, senderKeyRaw)) {
-               return;
-           }
+        // 密钥轮换
+        if (data.type === "key_rotation") {
+          const senderUser = onlineUsers.get(data.sender);
+          if (!senderUser) {
+            return;
+          }
+          const senderKeyRaw = naclUtil.decodeBase64(senderUser.publicKey);
+          if (!verifySignature(data.content, data.signature, senderKeyRaw)) {
+            return;
+          }
 
-           let parsed = null;
-           try {
-             parsed = JSON.parse(data.content);
-           } catch (e) {
-             parsed = null;
-           }
+          let newKeyBase64 = null;
+          let parsed = null;
+          try {
+            parsed = JSON.parse(data.content);
+          } catch (e) {
+            parsed = null;
+          }
 
-           if (parsed && parsed.boxes && Array.isArray(parsed.boxes)) {
-             // per-recipient格式，找自己的box
-             const myEntry = parsed.boxes.find(b => b.recipient === credentials.username);
-             if (!myEntry) {
-               return;
-             }
-             const box = myEntry.box;
-             const newKeyBase64 = decryptMessage(box, senderKeyRaw, userKeys.secretKeyRaw);
-             if (newKeyBase64) {
-               const newKey = naclUtil.decodeBase64(newKeyBase64);
-               currentGroup.key = newKey;
-             }
-             return;
-           }
+          if (parsed && parsed.boxes && Array.isArray(parsed.boxes)) {
+            // 找自己的box
+            const myEntry = parsed.boxes.find(
+              (b) => b.recipient === credentials.username,
+            );
+            if (myEntry) {
+              newKeyBase64 = decryptMessage(
+                myEntry.box,
+                senderKeyRaw,
+                userKeys.secretKeyRaw,
+              );
+            }
+          } 
 
-           // 向后兼容：对称解密
-           const newKeyBase64 = symmetricDecrypt(data.content, currentGroup.key);
-           if (newKeyBase64) {
-               const newKey = naclUtil.decodeBase64(newKeyBase64);
-               currentGroup.key = newKey;
-           }
-           return;
+          // 统一应用新密钥
+          if (newKeyBase64) {
+            const newKey = naclUtil.decodeBase64(newKeyBase64);
+            currentGroup.key = newKey;
+            currentGroup.lastRotationAt = data.timestamp;
+
+            // 更新邀请码
+            const newInviteCode = createInviteCode(
+              currentGroup.id,
+              currentGroup.key,
+              currentGroup.name,
+              currentGroup.creator,
+              data.timestamp
+            );
+            currentGroup.inviteCode = newInviteCode;
+          } 
+          return;
         }
         // 轮换选举：优先创建者，否则最近活跃发送者
-        if (data.type === 'rotate_election') {
-           const senderUser = onlineUsers.get(data.sender);
-           if (!senderUser) {
-             return;
-           }
+        if (data.type === "rotate_election") {
+          const senderUser = onlineUsers.get(data.sender);
+          if (!senderUser) {
+            return;
+          }
 
-           const senderKeyRaw = naclUtil.decodeBase64(senderUser.publicKey);
-           if (!verifySignature(data.content, data.signature, senderKeyRaw)) {
-             return;
-           }
+          const senderKeyRaw = naclUtil.decodeBase64(senderUser.publicKey);
+          if (!verifySignature(data.content, data.signature, senderKeyRaw)) {
+            return;
+          }
 
-           let payload = null;
-           try {
-             payload = JSON.parse(data.content);
-           } catch (e) {
-             return;
-           }
+          let payload = null;
+          try {
+            payload = JSON.parse(data.content);
+          } catch (e) {
+            return;
+          }
 
-           const creator = currentGroup && currentGroup.creator ? currentGroup.creator : null;
-           const preferred = (creator && onlineUsers.has(creator)) ? creator : (payload.lastActiveSender || (currentGroup && currentGroup.lastActiveSender));
+          const leavingUser = payload.leavingUser;
+          const creator =
+            currentGroup && currentGroup.creator ? currentGroup.creator : null;
 
-           if (!preferred) {
-             return;
-           }
+          // 选举优先级：创建者 -> 最活跃
+          const isOnline = (u) =>
+            u === credentials.username || onlineUsers.has(u);
 
-           if (preferred === credentials.username) {
-             // 5秒内不重复轮换
-             const now = Date.now();
-             currentGroup.lastRotationAt = currentGroup.lastRotationAt || 0;
-             if (now - currentGroup.lastRotationAt < 5000) {
-               return;
-             }
+          let candidate =
+            creator && isOnline(creator) && creator !== leavingUser ? creator : null;
 
-             try {
-               await performGroupKeyRotation(credentials.username);
-               currentGroup.lastRotationAt = Date.now();
-             } catch (e) {
-               console.error('执行轮换失败:', e);
-             }
-           }
-           return;
+          if (!candidate) {
+            const lastActive =
+              payload.lastActiveSender ||
+              (currentGroup && currentGroup.lastActiveSender);
+            if (
+              lastActive &&
+              isOnline(lastActive) &&
+              lastActive !== leavingUser
+            ) {
+              candidate = lastActive;
+            }
+          }
+
+          if (!candidate && currentGroup && currentGroup.members) {
+            const onlineMembers = currentGroup.members
+              .filter(
+                (m) =>
+                  (m === credentials.username || onlineUsers.has(m)) &&
+                  m !== leavingUser,
+              )
+              .sort();
+
+            if (onlineMembers.length > 0) {
+              candidate = onlineMembers[0];
+            }
+          }
+
+          const preferred = candidate;
+
+          if (!preferred) {
+            return;
+          }
+
+          if (preferred === credentials.username) {
+            try {
+              await performGroupKeyRotation(credentials.username);
+              currentGroup.lastRotationAt = Date.now();
+            } catch (e) {
+              // 忽略
+            }
+          }
+          return;
         }
 
         let sigStatus = undefined;
         if (data.signature) {
-           const senderUser = onlineUsers.get(data.sender);
-           if (senderUser) {
-             const senderKeyRaw = naclUtil.decodeBase64(senderUser.publicKey);
-             const isValid = verifySignature(data.content, data.signature, senderKeyRaw);
-             sigStatus = Boolean(isValid);
-             if (!isValid) {
-               console.log(`\n消息签名无效 [${data.sender}]`);
-             }
-           }
+          const senderUser = onlineUsers.get(data.sender);
+          if (senderUser) {
+            const senderKeyRaw = naclUtil.decodeBase64(senderUser.publicKey);
+            const isValid = verifySignature(
+              data.content,
+              data.signature,
+              senderKeyRaw,
+            );
+            sigStatus = Boolean(isValid);
+            if (!isValid) {
+              console.log(`\n消息签名无效 [${data.sender}]`);
+            }
+          }
         }
 
         const decrypted = symmetricDecrypt(data.content, currentGroup.key);
 
         if (decrypted && data.sender !== credentials.username) {
           const timestamp = new Date(data.timestamp).toLocaleTimeString();
-          console.log(`\n[${timestamp}] ${data.sender} ${sigStatus}: ${decrypted}`);
-          if (currentGroup && currentGroup.type === 'group') {
+          console.log(
+            `\n[${timestamp}] ${data.sender} ${sigStatus}: ${decrypted}`,
+          );
+          if (currentGroup && currentGroup.type === "group") {
             currentGroup.lastActiveSender = data.sender;
           }
           rl.prompt();
@@ -553,41 +692,51 @@ async function attemptLogin() {
     };
   };
 
-  async function joinGroupWithInvite(code, node, credentials, currentGroupRef, rl) {
+  async function joinGroupWithInvite(
+    code,
+    node,
+    credentials,
+    currentGroupRef,
+    rl,
+  ) {
     try {
       const cleanCode = unformatInviteCode(code);
       const invite = parseInviteCode(cleanCode);
 
       if (invite.isExpired) {
-        console.log(`\n邀请码已过期（${new Date(invite.createdAt).toLocaleString()}）`);
+        console.log(
+          `\n邀请码已过期（${new Date(invite.createdAt).toLocaleString()}）`,
+        );
         return;
       }
 
       console.log(`\n邀请码有效，群组: "${invite.groupName}"`);
 
       const topic = `group-${invite.groupId}`;
-      
+
       const replayProtection = new ReplayProtection();
 
       currentGroup = {
-        type: 'group',
+        type: "group",
         id: invite.groupId,
         name: invite.groupName,
         key: invite.sharedKey,
         topic: topic,
         inviteCode: cleanCode,
-        replayProtection: replayProtection
+        replayProtection: replayProtection,
       };
 
-      currentGroup.members = [credentials.username, ...Array.from(onlineUsers.keys())].filter((v, i, a) => a.indexOf(v) === i);
+      currentGroup.members = [
+        credentials.username,
+        ...Array.from(onlineUsers.keys()),
+      ].filter((v, i, a) => a.indexOf(v) === i);
       currentGroup.creator = invite.creator;
       currentGroup.lastRotationAt = 0;
       currentGroup.lastActiveSender = invite.creator || credentials.username;
 
-
       await node.joinTopic(topic, createMessageHandler());
 
-      await new Promise(resolve => setTimeout(resolve, 10000));
+      await new Promise((resolve) => setTimeout(resolve, 10000));
 
       const stats = node.getStats();
       console.log(`\n就绪，连接数: ${stats.totalConnections}`);
@@ -598,37 +747,45 @@ async function attemptLogin() {
 
   rl.prompt();
 
-  rl.on('line', async (input) => {
+  rl.on("line", async (input) => {
     const message = input.trim();
 
-    if (message.startsWith('/')) {
-      const [cmd, ...args] = message.split(' ');
+    if (message.startsWith("/")) {
+      const [cmd, ...args] = message.split(" ");
 
       switch (cmd) {
-        case '/create':
+        case "/create":
           {
-            const groupName = args.join(' ') || '未命名群组';
+            const groupName = args.join(" ") || "未命名群组";
 
-            const groupId = crypto.randomBytes(8).toString('hex');
+            const groupId = crypto.randomBytes(8).toString("hex");
             const sharedKey = crypto.randomBytes(32);
             const topic = `group-${groupId}`;
 
-            const inviteCode = createInviteCode(groupId, sharedKey, groupName, credentials.username);
+            const inviteCode = createInviteCode(
+              groupId,
+              sharedKey,
+              groupName,
+              credentials.username,
+            );
             const formatted = formatInviteCode(inviteCode);
-            
+
             const replayProtection = new ReplayProtection();
 
             currentGroup = {
-              type: 'group',
+              type: "group",
               id: groupId,
               name: groupName,
               key: sharedKey,
               topic: topic,
               inviteCode: inviteCode,
-              replayProtection: replayProtection
+              replayProtection: replayProtection,
             };
 
-            currentGroup.members = [credentials.username, ...Array.from(onlineUsers.keys())].filter((v, i, a) => a.indexOf(v) === i);
+            currentGroup.members = [
+              credentials.username,
+              ...Array.from(onlineUsers.keys()),
+            ].filter((v, i, a) => a.indexOf(v) === i);
             currentGroup.creator = credentials.username;
             currentGroup.lastRotationAt = 0;
             currentGroup.lastActiveSender = credentials.username;
@@ -638,94 +795,110 @@ async function attemptLogin() {
 
             await node.joinTopic(topic, createMessageHandler());
 
-            await new Promise(resolve => setTimeout(resolve, 10000));
+            await new Promise((resolve) => setTimeout(resolve, 10000));
 
             const stats = node.getStats();
             console.log(`\n就绪，连接数: ${stats.totalConnections}`);
           }
           break;
 
-        case '/dm':
+        case "/dm":
           {
             const targetUser = args[0];
             if (!targetUser) {
-               console.log('需要用户名: /dm <username>');
-               break;
+              console.log("需要用户名: /dm <username>");
+              break;
             }
             if (targetUser === credentials.username) {
-               console.log('不能和自己聊');
-               break;
+              console.log("不能和自己聊");
+              break;
             }
-            
+
             const peer = onlineUsers.get(targetUser);
             if (!peer) {
-               console.log(`${targetUser} 不在线`);
-               break;
+              console.log(`${targetUser} 不在线`);
+              break;
             }
 
             // 用户名排序确保topic唯一
             const sortedUsers = [credentials.username, targetUser].sort();
-            const dmTopic = `dm-${sortedUsers.join('-')}`;
-            
-            await node.publish(USER_REGISTRY_TOPIC, JSON.stringify({
-                type: 'dm_signal',
+            const dmTopic = `dm-${sortedUsers.join("-")}`;
+
+            await node.publish(
+              USER_REGISTRY_TOPIC,
+              JSON.stringify({
+                type: "dm_signal",
                 target: targetUser,
-                sender: credentials.username
-            }));
+                sender: credentials.username,
+              }),
+            );
 
             const replayProtection = new ReplayProtection();
 
             currentGroup = {
-                type: 'dm',
-                id: dmTopic,
-                name: `与 ${targetUser} 的私聊`,
-                topic: dmTopic,
-                peerUsername: targetUser,
-                peerPublicKey: naclUtil.decodeBase64(peer.publicKey),
-                replayProtection: replayProtection
+              type: "dm",
+              id: dmTopic,
+              name: `与 ${targetUser} 的私聊`,
+              topic: dmTopic,
+              peerUsername: targetUser,
+              peerPublicKey: naclUtil.decodeBase64(peer.publicKey),
+              replayProtection: replayProtection,
             };
 
             console.log(`\n进入私聊: ${targetUser}`);
-            
-            const history = loadHistory(credentials.username, naclUtil.encodeBase64(currentGroup.peerPublicKey), 'direct');
+
+            const history = loadHistory(
+              credentials.username,
+              naclUtil.encodeBase64(currentGroup.peerPublicKey),
+              "direct",
+            );
             if (history.length > 0) {
-                console.log(`\n历史记录:`);
-                for (const msg of history) {
-                    const time = new Date(msg.timestamp).toLocaleString();
-                    const sender = msg.senderName === credentials.username ? '我' : msg.senderName;
-                    console.log(`[${time}] ${sender}: ${msg.content}`);
-                }
-                console.log();
+              console.log(`\n历史记录:`);
+              for (const msg of history) {
+                const time = new Date(msg.timestamp).toLocaleString();
+                const sender =
+                  msg.senderName === credentials.username
+                    ? "我"
+                    : msg.senderName;
+                console.log(`[${time}] ${sender}: ${msg.content}`);
+              }
+              console.log();
             }
 
             await node.joinTopic(dmTopic, createMessageHandler());
           }
           break;
 
-        case '/rotate':
-          if (!currentGroup || currentGroup.type !== 'group') {
+        case "/rotate":
+          if (!currentGroup || currentGroup.type !== "group") {
             console.log(`\n需要先加入群组`);
           } else {
             try {
               await performGroupKeyRotation(credentials.username);
             } catch (e) {
-              console.error('轮换失败:', e);
+              console.error("轮换失败:", e);
             }
           }
           break;
 
-        case '/join':
+        case "/join":
           {
-            const code = args.join(' ');
+            const code = args.join(" ");
             if (!code) {
               console.log(`\n需要邀请码: /join <邀请码>`);
             } else {
-              await joinGroupWithInvite(code, node, credentials, currentGroup, rl);
+              await joinGroupWithInvite(
+                code,
+                node,
+                credentials,
+                currentGroup,
+                rl,
+              );
             }
           }
           break;
 
-        case '/invite':
+        case "/invite":
           if (!currentGroup) {
             console.log(`\n需要先加入群组`);
           } else {
@@ -734,92 +907,99 @@ async function attemptLogin() {
           }
           break;
 
-        case '/users':
+        case "/users":
           {
             console.log(`\n在线用户 (${onlineUsers.size}):`);
             if (onlineUsers.size === 0) {
               console.log(`(无)`);
             } else {
               for (const [username, user] of onlineUsers) {
-                const timeAgo = Math.floor((Date.now() - user.timestamp) / 1000);
+                const timeAgo = Math.floor(
+                  (Date.now() - user.timestamp) / 1000,
+                );
                 console.log(`- ${username} (${timeAgo}秒前)`);
               }
             }
           }
           break;
 
-        case '/stats':
+        case "/stats":
           {
             const stats = node.getStats();
-          console.log(`\n统计:`);
-          console.log(`用户: ${credentials.username}`);
-          console.log(`连接: ${stats.totalConnections}`);
-          console.log(`在线: ${onlineUsers.size}`);
-          if (currentGroup) {
-            console.log(`群组: ${currentGroup.name}`);
-          }
+            console.log(`\n统计:`);
+            console.log(`用户: ${credentials.username}`);
+            console.log(`连接: ${stats.totalConnections}`);
+            console.log(`在线: ${onlineUsers.size}`);
+            if (currentGroup) {
+              console.log(`群组: ${currentGroup.name}`);
+            }
           }
           break;
 
-        case '/exit':
-          console.log('\n退出...');
+        case "/exit":
+          console.log("\n退出...");
           await cleanup();
           rl.close();
           process.exit(0);
           break;
 
-        case '/help':
+        case "/help":
           console.log(`\n命令: /create /join /dm /invite /users /stats /exit`);
           break;
 
         default:
           console.log(`\n未知命令: ${cmd}，输入 /help 查看`);
       }
-
     } else if (message) {
       if (!currentGroup) {
         console.log(`\n需要先创建/加入群组，或使用 /dm 私聊`);
       } else {
-        if (currentGroup.type === 'dm') {
-            const encrypted = encryptMessage(message, currentGroup.peerPublicKey, userKeys.secretKeyRaw);
-            // 统一格式，额外加入签名
-            const signature = signMessage(encrypted, userKeys.secretKeyRaw);
+        if (currentGroup.type === "dm") {
+          const encrypted = encryptMessage(
+            message,
+            currentGroup.peerPublicKey,
+            userKeys.secretKeyRaw,
+          );
+          // 统一格式，额外加入签名
+          const signature = signMessage(encrypted, userKeys.secretKeyRaw);
 
-            const timestamp = Date.now();
-            await node.publish(currentGroup.topic, JSON.stringify({
-                type: 'dm_message',
-                sender: credentials.username,
-                content: encrypted,
-                signature: signature,
-                timestamp: timestamp
-            }));
+          const timestamp = Date.now();
+          await node.publish(
+            currentGroup.topic,
+            JSON.stringify({
+              type: "dm_message",
+              sender: credentials.username,
+              content: encrypted,
+              signature: signature,
+              timestamp: timestamp,
+            }),
+          );
 
-             // 缓存发送的消息
-             cacheMessage(credentials.username, {
-                type: 'direct_message',
-                content: message,
-                timestamp: timestamp,
-                senderPublicKey: userKeys.publicKey, // 我发的，sender是我
-                senderName: credentials.username,
-                peerPublicKey: naclUtil.encodeBase64(currentGroup.peerPublicKey), // 对话对象是对方
-                isEncrypted: false
-             });
-
+          // 缓存发送的消息
+          cacheMessage(credentials.username, {
+            type: "direct_message",
+            content: message,
+            timestamp: timestamp,
+            senderPublicKey: userKeys.publicKey, // 我发的，sender是我
+            senderName: credentials.username,
+            peerPublicKey: naclUtil.encodeBase64(currentGroup.peerPublicKey), // 对话对象是对方
+            isEncrypted: false,
+          });
         } else {
-            const encrypted = symmetricEncrypt(message, currentGroup.key);
-            const signature = signMessage(encrypted, userKeys.secretKeyRaw);
-            
-            await node.publish(
-              currentGroup.topic,
-              JSON.stringify({
-                type: 'message',
-                sender: credentials.username,
-                content: encrypted,
-                signature: signature,
-                timestamp: Date.now()
-              })
-            );
-            currentGroup.lastActiveSender = credentials.username;
+          const encrypted = symmetricEncrypt(message, currentGroup.key);
+          const signature = signMessage(encrypted, userKeys.secretKeyRaw);
+
+          await node.publish(
+            currentGroup.topic,
+            JSON.stringify({
+              type: "message",
+              sender: credentials.username,
+              content: encrypted,
+              signature: signature,
+              timestamp: Date.now(),
+            }),
+          );
+          currentGroup.lastActiveSender = credentials.username;
         }
       }
     }
@@ -827,7 +1007,7 @@ async function attemptLogin() {
     rl.prompt();
   });
 
-  rl.on('close', async () => {
+  rl.on("close", async () => {
     await cleanup();
     process.exit(0);
   });
@@ -836,8 +1016,8 @@ async function attemptLogin() {
 async function main() {
   initRegistry();
 
-  process.on('SIGINT', () => {
-    console.log('\n保存数据中...');
+  process.on("SIGINT", () => {
+    console.log("\n保存数据中...");
     saveRegistryToDisk();
     process.exit(0);
   });
@@ -847,20 +1027,20 @@ async function main() {
       await attemptLogin();
       break;
     } catch (error) {
-      if (error.code === 'WRONG_PASSWORD') {
-        console.log('\n');
+      if (error.code === "WRONG_PASSWORD") {
+        console.log("\n");
         continue;
-      } else if (error.code === 'REGISTRATION_LIMIT') {
+      } else if (error.code === "REGISTRATION_LIMIT") {
         process.exit(1);
       } else {
-        console.error('错误:', error);
+        console.error("错误:", error);
         process.exit(1);
       }
     }
   }
 }
 
-main().catch(error => {
-  console.error('未捕获的错误:', error);
+main().catch((error) => {
+  console.error("未捕获的错误:", error);
   process.exit(1);
 });
