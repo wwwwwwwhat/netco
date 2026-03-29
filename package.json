@@ -1,28 +1,9 @@
 {
-  "name": "decentralized-secure-social-network",
-  "version": "1.0.0",
-  "description": "去中心化安全社交网络 - 基于Hyperswarm的现代P2P即时通讯系统",
-  "main": "src/index.js",
   "type": "module",
   "scripts": {
-    "start": "node src/index.js",
-    "server": "node src/server.js",
-    "demo": "node src/examples/hyperswarm-demo.js",
-    "test": "node src/examples/hyperswarm-demo.js",
-    "alice": "node src/clients/alice.js",
-    "bob": "node src/clients/bob.js",
-    "eve": "node src/clients/eve.js"
+    "start": "node src/clients/main-client.js",
+    "net-co": "node src/clients/main-client.js"
   },
-  "keywords": [
-    "hyperswarm",
-    "p2p",
-    "decentralized",
-    "social-network",
-    "dht",
-    "nat-traversal"
-  ],
-  "author": "",
-  "license": "MIT",
   "dependencies": {
     "@chainsafe/libp2p-gossipsub": "^13.0.0",
     "@chainsafe/libp2p-noise": "^15.0.0",

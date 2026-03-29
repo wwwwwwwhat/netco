@@ -1,47 +1,24 @@
-/**
- * 安全层 - 消息加密和解密
- * 使用 NaCl Box (Curve25519 + XSalsa20 + Poly1305) 进行端到端加密
- */
-
 import nacl from 'tweetnacl';
 import naclUtil from 'tweetnacl-util';
 import crypto from 'crypto';
 import ed2curve from 'ed2curve';
+import { hashData } from './digest.js';
 
 const b64_encode = naclUtil.encodeBase64;
 const b64_decode = naclUtil.decodeBase64;
 
-/**
- * 将签名密钥转换为加密密钥
- * Ed25519 -> Curve25519
- */
-function convertSignKeyToEncryptKey(signKey) {
-  return nacl.sign.keyPair.fromSecretKey(signKey);
-}
-
-/**
- * 加密消息
- * @param {string} message - 要加密的消息
- * @param {Uint8Array} recipientPublicKey - 接收方的公钥(Ed25519原始格式)
- * @param {Uint8Array} senderSecretKey - 发送方的私钥(Ed25519原始格式)
- * @returns {string} Base64编码的加密消息
- */
+// Ed25519转Curve25519 才能box加密
 export function encryptMessage(message, recipientPublicKey, senderSecretKey) {
-  // 将消息转换为字节数组
   const messageBytes = new TextEncoder().encode(message);
-
-  // 生成随机nonce (24字节)
   const nonce = nacl.randomBytes(24);
 
-  // 转换密钥 Ed25519 -> Curve25519
   const senderEncryptSecret = ed2curve.convertSecretKey(senderSecretKey);
   const recipientEncryptPublic = ed2curve.convertPublicKey(recipientPublicKey);
 
   if (!senderEncryptSecret || !recipientEncryptPublic) {
-      throw new Error('密钥转换失败: 无效的 Ed25519 密钥');
+    throw new Error('密钥转换失败 Ed25519无效');
   }
 
-  // 使用 Box 加密
   const encryptedMessage = nacl.box(
     messageBytes,
     nonce,
@@ -49,7 +26,7 @@ export function encryptMessage(message, recipientPublicKey, senderSecretKey) {
     senderEncryptSecret
   );
 
-  // 将 nonce 和加密消息组合
+  // nonce放前 解密时提
   const fullMessage = new Uint8Array(nonce.length + encryptedMessage.length);
   fullMessage.set(nonce);
   fullMessage.set(encryptedMessage, nonce.length);
@@ -57,13 +34,6 @@ export function encryptMessage(message, recipientPublicKey, senderSecretKey) {
   return b64_encode(fullMessage);
 }
 
-/**
- * 解密消息
- * @param {string} encryptedMessageBase64 - Base64编码的加密消息
- * @param {Uint8Array} senderPublicKey - 发送方的公钥(Ed25519原始格式)
- * @param {Uint8Array} recipientSecretKey - 接收方的私钥(Ed25519原始格式)
- * @returns {string|null} 解密后的消息，失败返回null
- */
 export function decryptMessage(encryptedMessageBase64, senderPublicKey, recipientSecretKey) {
   try {
     const fullMessage = b64_decode(encryptedMessageBase64);
@@ -73,13 +43,11 @@ export function decryptMessage(encryptedMessageBase64, senderPublicKey, recipien
     const nonce = fullMessage.slice(0, 24);
     const encryptedMessage = fullMessage.slice(24);
 
-    // 转换密钥 Ed25519 -> Curve25519
     const recipientEncryptSecret = ed2curve.convertSecretKey(recipientSecretKey);
     const senderEncryptPublic = ed2curve.convertPublicKey(senderPublicKey);
 
     if (!recipientEncryptSecret || !senderEncryptPublic) {
-        console.error('密钥转换失败');
-        return null;
+      return null;
     }
 
     const decryptedBytes = nacl.box.open(
@@ -89,23 +57,17 @@ export function decryptMessage(encryptedMessageBase64, senderPublicKey, recipien
       recipientEncryptSecret
     );
 
-    if (!decryptedBytes) return null;
+    if (!decryptedBytes) { 
+      return null;
+    }
 
     return new TextDecoder().decode(decryptedBytes);
   } catch (error) {
-    console.error('解密失败:', error);
     return null;
   }
 }
 
-
-
-/**
- * 生成消息标签 (Tag)
- * 使用密钥的部分作为标签,用于过滤
- * @param {Uint8Array} publicKey - 公钥
- * @returns {string} 标签 (前8个字节的hex表示)
- */
+// 公钥前8字节做tag 快速过滤
 export function generateTag(publicKey) {
   const tagBytes = publicKey.slice(0, 8);
   return Array.from(tagBytes)
@@ -113,23 +75,11 @@ export function generateTag(publicKey) {
     .join('');
 }
 
-/**
- * 验证消息标签
- * @param {string} tag - 消息携带的标签
- * @param {Uint8Array} publicKey - 用于验证的公钥
- * @returns {boolean} 标签是否匹配
- */
 export function verifyTag(tag, publicKey) {
-  const expectedTag = generateTag(publicKey);
-  return tag === expectedTag;
+  return tag === generateTag(publicKey);
 }
 
-/**
- * 对称加密 (用于群组消息)
- * @param {string} message - 消息内容
- * @param {Uint8Array} sharedKey - 共享密钥 (32字节)
- * @returns {string} Base64编码的加密消息
- */
+// 群聊对称加密 nonce+密文
 export function symmetricEncrypt(message, sharedKey) {
   const messageBytes = new TextEncoder().encode(message);
   const nonce = nacl.randomBytes(24);
@@ -143,12 +93,6 @@ export function symmetricEncrypt(message, sharedKey) {
   return b64_encode(fullMessage);
 }
 
-/**
- * 对称解密 (用于群组消息)
- * @param {string} encryptedMessage - Base64编码的加密消息
- * @param {Uint8Array} sharedKey - 共享密钥 (32字节)
- * @returns {string|null} 解密后的消息
- */
 export function symmetricDecrypt(encryptedMessage, sharedKey) {
   try {
     const fullMessage = b64_decode(encryptedMessage);
@@ -163,7 +107,44 @@ export function symmetricDecrypt(encryptedMessage, sharedKey) {
 
     return new TextDecoder().decode(decrypted);
   } catch (error) {
-    console.error('对称解密失败:', error.message);
+    return null;
+  }
+}
+
+// 本地存储密钥派生 pbkdf2 10万次
+export function deriveStorageKey(username, password) {
+  const salt = hashData(username);
+  return crypto.pbkdf2Sync(password, salt, 100000, 32, 'sha512');
+}
+
+// GCM模式 12字节IV 格式iv:authTag:密文
+export function encryptStorageData(text, key) {
+  const iv = crypto.randomBytes(12);
+  const cipher = crypto.createCipheriv('aes-256-gcm', key, iv);
+
+  let encrypted = cipher.update(text, 'utf8', 'base64');
+  encrypted += cipher.final('base64');
+  const authTag = cipher.getAuthTag();
+
+  return `${iv.toString('base64')}:${authTag.toString('base64')}:${encrypted}`;
+}
+
+export function decryptStorageData(encryptedData, key) {
+  try {
+    const parts = encryptedData.split(':');
+    if (parts.length !== 3) return null;
+    
+    const iv = Buffer.from(parts[0], 'base64');
+    const authTag = Buffer.from(parts[1], 'base64');
+    const encrypted = parts[2];
+
+    const decipher = crypto.createDecipheriv('aes-256-gcm', key, iv);
+    decipher.setAuthTag(authTag);
+    
+    let decrypted = decipher.update(encrypted, 'base64', 'utf8');
+    decrypted += decipher.final('utf8');
+    return decrypted;
+  } catch (e) {
     return null;
   }
 }
@@ -174,5 +155,8 @@ export default {
   generateTag,
   verifyTag,
   symmetricEncrypt,
-  symmetricDecrypt
+  symmetricDecrypt,
+  deriveStorageKey,
+  encryptStorageData,
+  decryptStorageData
 };
